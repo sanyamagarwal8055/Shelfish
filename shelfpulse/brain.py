@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
+from collections.abc import Hashable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,7 +31,8 @@ from shelfpulse.contracts import (
 )
 from shelfpulse.decision.types import Event, SlotObservation, StrayItem, Task
 from shelfpulse.planogram.loader import PlanogramStore
-from shelfpulse.planogram.matcher import match
+from shelfpulse.planogram.matcher import MatchResult, match
+from shelfpulse.state.slot_tracker import SlotTracker
 
 OUTPUT_FILES = (
     "observations.jsonl",
@@ -58,6 +60,7 @@ class TrackerCfg(_Cfg):
     k: int = Field(ge=1)
     n: int = Field(ge=1)
     clear_after: int = Field(ge=1)
+    robot_overrides: bool
 
 
 class FusionCfg(_Cfg):
@@ -101,6 +104,7 @@ class Summary:
     no_planogram: set[str] = field(default_factory=set)
     slot_status: Counter[str] = field(default_factory=Counter)
     strays: Counter[str] = field(default_factory=Counter)
+    events: Counter[str] = field(default_factory=Counter)
 
 
 @dataclass
@@ -118,6 +122,10 @@ class Brain:
         self.known_skus = known_skus
         self.planograms = planograms
         self.summary = Summary()
+        t = cfg.tracker
+        self.tracker = SlotTracker(t.k, t.n, t.clear_after, t.robot_overrides)
+        self._meta: dict[Hashable, tuple[int, int | None, str]] = {}  # key -> row, position, sku
+        self._live_strays: dict[str, set[Hashable]] = defaultdict(set)  # bay -> watched strays
 
     def handle(self, reading: BayReading) -> Output:
         self.summary.readings += 1
@@ -133,8 +141,57 @@ class Brain:
         m = match(plan, reading)
         self.summary.slot_status.update(o.status for o in m.slots)
         self.summary.strays.update(s.kind for s in m.strays)
-        # shelf state -> tracker -> decision arrive in later steps
-        return Output(observations=m.slots, strays=m.strays)
+        events = self._track(reading, m)
+        self.summary.events.update(e.kind for e in events)
+        # shelf state (fusion, quantity) and decision (diagnosis, tasks) arrive in later steps
+        return Output(observations=m.slots, strays=m.strays, events=events)
+
+    def _track(self, reading: BayReading, m: MatchResult) -> list[Event]:
+        """Feed slot statuses and strays to the k-of-n tracker; return the confirmed changes."""
+        reports: list[tuple[Hashable, str | None]] = []
+        for o in m.slots:
+            if o.status != "UNKNOWN":  # unseen: no vote either way
+                key = ("slot", o.bay_id, o.row, o.position)
+                self._meta[key] = (o.row, o.position, o.sku)
+                reports.append((key, None if o.status == "OK" else o.status))
+
+        present: set[Hashable] = set()
+        for s in m.strays:
+            if s.kind == "AMBIGUOUS":  # never alerted; the robot planner re-checks these
+                continue
+            where = s.position if s.position is not None else f"x{int(s.x_cm // 10)}"
+            key = ("stray", s.bay_id, s.row, where, s.sku)
+            if key not in present:  # several packs of one stray SKU in a slot: one vote
+                present.add(key)
+                self._meta[key] = (s.row, s.position, s.sku)
+                reports.append((key, s.kind))
+        live = self._live_strays[reading.bay_id]
+        seen_rows = {r.row for r in reading.rows}
+        reports += [(key, None) for key in sorted(live - present, key=str) if key[2] in seen_rows]
+        live |= present
+
+        events = []
+        for key, kind in reports:
+            tr = self.tracker.update(key, kind, reading.t, reading.source)
+            if key[0] == "stray" and self.tracker.quiet(key):
+                live.discard(key)
+            if tr is None:
+                continue
+            row, position, sku = self._meta[key]
+            events.append(
+                Event(
+                    kind=tr.kind,
+                    bay_id=reading.bay_id,
+                    row=row,
+                    position=position,
+                    sku=sku,
+                    t=tr.t,
+                    since=tr.since,
+                    previous=tr.previous,
+                    source=reading.source,
+                )
+            )
+        return events
 
 
 def run(readings_path: Path, out_dir: Path, cfg: BrainConfig, sku_master: Path) -> Summary:
@@ -167,6 +224,7 @@ def main(argv: list[str] | None = None) -> int:
     s = run(args.readings, args.out, load_brain_config(args.config), args.sku_master)
     print(f"{s.readings} readings: {s.trusted} trusted, {s.untrusted} below quality threshold")
     print(f"slots: {dict(sorted(s.slot_status.items()))}  strays: {dict(sorted(s.strays.items()))}")
+    print(f"events: {dict(sorted(s.events.items()))}")
     if s.no_planogram:
         print(f"warning: no planogram for bays {sorted(s.no_planogram)}", file=sys.stderr)
     if s.unknown_skus:

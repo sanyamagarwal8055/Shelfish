@@ -11,6 +11,7 @@ tracker:
   k: 2 # raise OUT/LOW when k of the last n trusted frames agree
   n: 3
   clear_after: 2 # consecutive OK frames to resolve
+  robot_overrides: true # one trusted robot frame raises or resolves on its own
 
 fusion:
   conflict_window_s: 300 # camera vs robot disagree within this window -> slot unsure + mission
