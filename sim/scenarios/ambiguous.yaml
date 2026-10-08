@@ -1,0 +1,10 @@
+name: ambiguous
+description: Vision can't tell dal sizes apart; a dal pack sits in the rice row and rice is ambiguous too.
+expect: No MISPLACED event (the dal stray is AMBIGUOUS) and no OUT for rice. Later, a robot mission is queued.
+start: "10:00"
+end: "10:30"
+bays: [G1-L-04]
+events:
+  - {at: "10:05", do: misplace, bay: G1-L-04, row: 2, x_cm: 114.0, sku: DAL_500G}
+  - {at: "10:05", do: ambiguous, sku: DAL_500G, candidates: [DAL_1KG, DAL_500G], until: "10:30"}
+  - {at: "10:05", do: ambiguous, sku: RICE_1KG, candidates: [RICE_1KG, RICE_5KG], until: "10:30"}

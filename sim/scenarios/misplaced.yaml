@@ -1,0 +1,9 @@
+name: misplaced
+description: A shampoo bottle is left in the rice (staples) row for 25 minutes.
+expect: One MISPLACED event for SHAMPOO_180ML in G1-L-04 row 2, RESOLVED once it is taken away. Later, a RETURN task to its home bay G7-R-02.
+start: "10:00"
+end: "10:40"
+bays: [G1-L-04]
+events:
+  - {at: "10:05", do: misplace, bay: G1-L-04, row: 2, x_cm: 114.0, sku: SHAMPOO_180ML}
+  - {at: "10:30", do: unmisplace, bay: G1-L-04, row: 2}

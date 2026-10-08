@@ -1,0 +1,11 @@
+name: sweep_theft
+description: All 8 rice packs in a slot vanish within 2 minutes with no sales.
+expect: OUT on G1-L-04 row 0 (RICE_1KG) with zero POS sales in the window. Later, a silent loss-prevention note, decided before any restock task.
+start: "10:00"
+end: "10:30"
+bays: [G1-L-04]
+stock: {RICE_1KG: {backroom: 50}}
+start_units: [{bay: G1-L-04, row: 0, position: 0, units: 8}]
+events:
+  - {at: "10:05", do: theft, bay: G1-L-04, row: 0, position: 0, qty: 4}
+  - {at: "10:06", do: theft, bay: G1-L-04, row: 0, position: 0, qty: 4}

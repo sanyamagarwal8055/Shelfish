@@ -75,12 +75,21 @@ class MissionsCfg(_Cfg):
     footfall_tx_per_10min_max: int = Field(ge=0)
 
 
+class SimCfg(_Cfg):
+    camera_interval_s: int = Field(gt=0)
+    camera_quality: float = Field(ge=0.0, le=1.0)
+    robot_quality: float = Field(ge=0.0, le=1.0)
+    conf: float = Field(ge=0.0, le=1.0)
+    ambiguous_conf: float = Field(ge=0.0, le=1.0)
+
+
 class BrainConfig(_Cfg):
     planograms: PlanogramsCfg
     tracker: TrackerCfg
     fusion: FusionCfg
     blocked: BlockedCfg
     missions: MissionsCfg
+    sim: SimCfg
 
 
 def load_brain_config(name_or_path: str | Path = "brain") -> BrainConfig:
