@@ -20,7 +20,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from shelfpulse.contracts import UNKNOWN_SKU, SkuRow, ambiguous_candidates
-from shelfpulse.perception.shelves import Rail
+from shelfpulse.perception.shelves import Rail, shelf_edge_depth
 
 
 @dataclass(frozen=True)
@@ -57,8 +57,7 @@ def recess_cm(
     w, h = x1 - x0, y1 - y0
     if w < 4 or h < 4:
         return None
-    # Shelf edge from the whole rail: a person in front covers part of it, never most of it.
-    e = _median(depth[rail.y0 + 1 : max(rail.y1 - 1, rail.y0 + 2)], s.min_valid_frac)
+    e = shelf_edge_depth(depth, rail)  # robust to people hiding most of the rail
     face = depth[y0 + h // 4 : y1 - h // 4, x0 + w // 4 : x1 - w // 4]  # centre of the front
     if e is None:
         return None

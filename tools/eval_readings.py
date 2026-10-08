@@ -3,7 +3,8 @@
     python tools/eval_readings.py --pred runs/p01/bay_readings.jsonl --gold runs/synth01/truth.jsonl
 
 Readings are paired by the file name in frame_ref, so a prediction made from
-runs/synth01/images/0003_G1-L-04.jpg matches the truth line for images/0003_G1-L-04.jpg.
+runs/synth01/images/0003_G1-L-04.jpg matches the truth line for images/0003_G1-L-04.jpg;
+--by-bay pairs by bay_id instead (one reading per bay, e.g. a robot pass vs its truth.jsonl).
 A gold reading with no prediction scores as an empty prediction.
 
 - facing-count error: mean |pred packs - gold packs| over every gold row.
@@ -144,11 +145,12 @@ def load(path: Path) -> list[BayReading]:
         return [parse_bay_reading(json.loads(s)) for s in f if s.strip()]
 
 
-def evaluate(pred: list[BayReading], gold: list[BayReading]) -> Report:
-    by_frame = {frame_key(r.frame_ref): r for r in pred}
+def evaluate(pred: list[BayReading], gold: list[BayReading], by_bay: bool = False) -> Report:
+    key_of = (lambda r: r.bay_id) if by_bay else (lambda r: frame_key(r.frame_ref))
+    by_frame = {key_of(r): r for r in pred}
     rep = Report()
     for g in gold:
-        key = frame_key(g.frame_ref)
+        key = key_of(g)
         p = by_frame.get(key)
         if p is None:
             rep.missing.append(key)
@@ -192,8 +194,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--pred", type=Path, required=True)
     ap.add_argument("--gold", type=Path, required=True)
     ap.add_argument("--summary", action="store_true", help="overall numbers only")
+    ap.add_argument("--by-bay", action="store_true", help="pair readings by bay_id")
     args = ap.parse_args(argv)
-    rep = evaluate(load(args.pred), load(args.gold))
+    rep = evaluate(load(args.pred), load(args.gold), args.by_bay)
     print(format_report(rep, per_bay=not args.summary))
     return 0
 

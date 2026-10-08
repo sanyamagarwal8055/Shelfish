@@ -67,6 +67,8 @@ def load_pipeline(
         min_cover=sh["min_cover"],
         occlusion_tol=sh["occlusion_tol"],
         min_occlusion_cm=sh["min_occlusion_cm"],
+        depth_margin_mm=sh["depth_margin_mm"],
+        depth_cover=sh["depth_cover"],
     )
     d = cfg["detector"]
     c = d["classic"]
@@ -242,7 +244,7 @@ def analyze(
         raise ValueError(f"depth_map {depth_map.shape} not aligned with image {bay_image.shape}")
     p = pipeline or default_pipeline()
     px_per_cm = bay_image.shape[1] / BAY_WIDTH_CM
-    shelves = find_shelves(bay_image, px_per_cm, p.shelves)
+    shelves = find_shelves(bay_image, px_per_cm, p.shelves, depth_map)
     boxes = p.detector.detect(bay_image, shelves, px_per_cm)
     namer = _namer(p.identifier, bay_image, boxes, bay_id) if p.identifier and boxes else None
     depther = _depther(depth_map, p) if depth_map is not None else None
