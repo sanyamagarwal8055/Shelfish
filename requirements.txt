@@ -2,5 +2,6 @@
 pydantic>=2.6
 pyyaml>=6.0
 numpy>=1.26
+opencv-python-headless>=4.9  # Vision: read images/video, warp, stitch, blur
 pytest>=8.0
 ruff>=0.5
