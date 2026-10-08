@@ -1,0 +1,10 @@
+name: true_stockout
+description: Atta sells out on both its rows and there is none in the backroom.
+expect: OUT on both ATTA_5KG slots, never resolved; system on-hand 0. Later, a manager re-order task and no restock task.
+start: "10:00"
+end: "10:45"
+bays: [G1-L-05]
+stock: {ATTA_5KG: {backroom: 0}}
+events:
+  - {at: "10:05", do: sell, bay: G1-L-05, row: 0, position: 0, qty: 12}
+  - {at: "10:05", do: sell, bay: G1-L-05, row: 1, position: 0, qty: 12}

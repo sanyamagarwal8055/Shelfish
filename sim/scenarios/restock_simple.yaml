@@ -1,0 +1,10 @@
+name: restock_simple
+description: Rice slot sells out; backroom has stock; staff restock 30 min later.
+expect: One OUT for G1-L-04 row 2 (RICE_1KG), then RESOLVED after the restock (~30 min to restore). Later, one P1 RESTOCK task that ends VERIFIED.
+start: "10:00"
+end: "11:00"
+bays: [G1-L-04]
+stock: {RICE_1KG: {backroom: 100}}
+events:
+  - {at: "10:05", do: sell, bay: G1-L-04, row: 2, position: 0, qty: 84}
+  - {at: "10:35", do: restock, bay: G1-L-04, row: 2, position: 0}

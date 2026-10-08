@@ -11,6 +11,7 @@ tracker:
   k: 2 # raise OUT/LOW when k of the last n trusted frames agree
   n: 3
   clear_after: 2 # consecutive OK frames to resolve
+  robot_overrides: true # one trusted robot frame raises or resolves on its own
 
 fusion:
   conflict_window_s: 300 # camera vs robot disagree within this window -> slot unsure + mission
@@ -20,3 +21,10 @@ blocked:
 
 missions:
   footfall_tx_per_10min_max: 25 # no missions while POS sales in the last 10 min exceed this
+
+sim: # store simulator (sim/): how the fake Vision track reports
+  camera_interval_s: 60 # locked design: 1 frame per minute
+  camera_quality: 0.92
+  robot_quality: 0.95
+  conf: 0.95 # pack confidence for a clearly identified pack
+  ambiguous_conf: 0.55

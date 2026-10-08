@@ -1,0 +1,10 @@
+name: occlusion_then_robot
+description: A trolley hides the whole bay for 35 minutes while the rice row sells out behind it.
+expect: No alert while the bay is occluded. Later, a robot mission once it has been blocked 15+ min, and the robot reading resolves the bay.
+start: "10:00"
+end: "10:50"
+bays: [G1-L-04]
+stock: {RICE_1KG: {backroom: 100}}
+events:
+  - {at: "10:05", do: occlude, bay: G1-L-04, x: [0.0, 120.0], until: "10:40"}
+  - {at: "10:10", do: sell, bay: G1-L-04, row: 2, position: 0, qty: 84}

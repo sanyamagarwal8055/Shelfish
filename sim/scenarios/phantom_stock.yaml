@@ -1,0 +1,11 @@
+name: phantom_stock
+description: Atta shelves are empty with no sales, yet the stock system says 18 on hand.
+expect: OUT on both ATTA_5KG slots with zero POS sales; system on-hand 18, backroom 0. Later, a CYCLE_COUNT task.
+start: "10:00"
+end: "10:30"
+bays: [G1-L-05]
+stock: {ATTA_5KG: {backroom: 0}}
+events:
+  - {at: "10:00", do: theft, bay: G1-L-05, row: 0, position: 0, qty: 12} # unrecorded loss before today
+  - {at: "10:00", do: theft, bay: G1-L-05, row: 1, position: 0, qty: 12}
+  - {at: "10:00", do: set_system, sku: ATTA_5KG, qty: 18}
