@@ -1,0 +1,17 @@
+# Brain settings (owned by the Brain track). Loaded by shelfpulse.brain.load_brain_config().
+# Shared robot limits (sweeps, max_bays, max_per_hour, blackout, camera_blocked_min) stay in
+# configs/robot.yaml.
+
+tracker:
+  k: 2 # raise OUT/LOW when k of the last n trusted frames agree
+  n: 3
+  clear_after: 2 # consecutive OK frames to resolve
+
+fusion:
+  conflict_window_s: 300 # camera vs robot disagree within this window -> slot unsure + mission
+
+blocked:
+  occluded_frac: 0.5 # bay counts as blocked if more than this fraction is occluded (or quality < 0.5)
+
+missions:
+  footfall_tx_per_10min_max: 25 # no missions while POS sales in the last 10 min exceed this
