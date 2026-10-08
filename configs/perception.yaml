@@ -1,0 +1,9 @@
+# Vision track settings (owned by Vision). Every tunable perception number lives here.
+
+# Fixed shelf cameras, mounted on the opposite side of the aisle (README 5.1, camera_planner).
+camera_plan:
+  hfov_deg: 90 # horizontal field of view
+  sensor_px: 4000 # horizontal pixels
+  min_px_per_cm: 10 # bay images must keep at least 10 px/cm
+  max_angle_deg: 35 # max viewing angle off the shelf normal
+  overlap_m: 0.2 # shared strip between neighbouring cameras
