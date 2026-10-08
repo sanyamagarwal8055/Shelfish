@@ -1,8 +1,9 @@
 """Train a YOLO pack detector on SKU-110K. Run on a free Colab/Kaggle GPU, not on a laptop.
 
 Colab (Runtime -> Change runtime type -> T4 GPU), one cell each:
-    !git clone https://github.com/sanyamagarwal8055/Shelfish.git && cd Shelfish && git checkout vision/dev
+    !git clone https://github.com/sanyamagarwal8055/Shelfish.git
     %cd Shelfish
+    !git checkout vision/dev
     !pip install -q -r requirements.txt ultralytics
     !python training/train_sku110k.py --epochs 50
     !python training/eval_sku110k.py --weights runs/train/sku110k/weights/best.pt
