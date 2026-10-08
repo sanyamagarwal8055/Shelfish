@@ -36,6 +36,7 @@ def main(argv: list[str] | None = None) -> int:
         imgsz=args.imgsz,
         batch=args.batch,
         device=args.device,
+        max_det=1000,  # SKU-110K images hold up to ~720 packs; the default 300 caps recall
         project=str(REPO / "runs" / "eval"),
         name="sku110k_test",
         exist_ok=True,
