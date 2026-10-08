@@ -10,6 +10,7 @@ import pytest
 from shelfpulse import bus
 from shelfpulse.brain import OUTPUT_FILES, load_brain_config, main, run
 from shelfpulse.contracts import BayReading, parse_bay_reading, to_json_dict
+from shelfpulse.decision.types import SlotObservation
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "contracts" / "fixtures"
@@ -36,9 +37,14 @@ def test_smoke_run_writes_outputs(tmp_path):
     out = tmp_path / "run1"
     s = run(SMOKE, out, load_brain_config(), SKUS)
     assert (s.readings, s.trusted, s.untrusted) == (3, 2, 1)
-    assert not s.unknown_skus
+    assert not s.unknown_skus and not s.no_planogram
     for name in OUTPUT_FILES:
         assert (out / name).exists()
+    # G1-L-04 row 3: 1 rice facing (LOW), DAL slot empty but occluded (UNKNOWN).
+    # G7-R-02 row 3: 1 ambiguous shampoo facing (LOW). Every unseen row: UNKNOWN.
+    assert s.slot_status["LOW"] == 2 and s.slot_status["OUT"] == 0
+    obs = bus.read_jsonl(out / "observations.jsonl", SlotObservation)
+    assert len(obs) == sum(s.slot_status.values()) == 9 + 7
 
 
 def test_outputs_are_overwritten(tmp_path):

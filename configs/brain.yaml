@@ -2,6 +2,11 @@
 # Shared robot limits (sweeps, max_bays, max_per_hour, blackout, camera_blocked_min) stay in
 # configs/robot.yaml.
 
+planograms:
+  # Searched in order; first <bay_id>.json wins (digital planogram beats robot label map).
+  # The demo_store fixture is last so the demo bays work before a store's own data exists.
+  dirs: [data/planograms, data/label_maps, contracts/fixtures/demo_store/planograms]
+
 tracker:
   k: 2 # raise OUT/LOW when k of the last n trusted frames agree
   n: 3
