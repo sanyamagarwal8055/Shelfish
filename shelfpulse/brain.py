@@ -2,15 +2,17 @@
 
     python -m shelfpulse.brain --readings runs/<id>/bay_readings.jsonl --out runs/<id>/
 
-Phase 1 reads a whole JSON-lines file in time order and writes events.jsonl, tasks.jsonl and
-missions.jsonl into --out (each overwritten). Readings below the contract quality threshold
-count as unseen. The reading clock drives everything; there is no datetime.now() here.
+Phase 1 reads a whole JSON-lines file in time order and writes into --out (each overwritten):
+observations.jsonl (status per planogram slot), strays.jsonl (misplaced / unknown / ambiguous
+packs), events.jsonl, tasks.jsonl and missions.jsonl. Readings below the contract quality
+threshold count as unseen. The reading clock drives everything; there is no datetime.now() here.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -26,9 +28,17 @@ from shelfpulse.contracts import (
     load_sku_master,
     reading_skus,
 )
-from shelfpulse.decision.types import Event, Task
+from shelfpulse.decision.types import Event, SlotObservation, StrayItem, Task
+from shelfpulse.planogram.loader import PlanogramStore
+from shelfpulse.planogram.matcher import match
 
-OUTPUT_FILES = ("events.jsonl", "tasks.jsonl", "missions.jsonl")
+OUTPUT_FILES = (
+    "observations.jsonl",
+    "strays.jsonl",
+    "events.jsonl",
+    "tasks.jsonl",
+    "missions.jsonl",
+)
 
 
 # --------------------------------------------------------------------------------------------
@@ -38,6 +48,10 @@ OUTPUT_FILES = ("events.jsonl", "tasks.jsonl", "missions.jsonl")
 
 class _Cfg(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class PlanogramsCfg(_Cfg):
+    dirs: list[str]
 
 
 class TrackerCfg(_Cfg):
@@ -59,6 +73,7 @@ class MissionsCfg(_Cfg):
 
 
 class BrainConfig(_Cfg):
+    planograms: PlanogramsCfg
     tracker: TrackerCfg
     fusion: FusionCfg
     blocked: BlockedCfg
@@ -83,19 +98,25 @@ class Summary:
     trusted: int = 0
     untrusted: int = 0
     unknown_skus: set[str] = field(default_factory=set)
+    no_planogram: set[str] = field(default_factory=set)
+    slot_status: Counter[str] = field(default_factory=Counter)
+    strays: Counter[str] = field(default_factory=Counter)
 
 
 @dataclass
 class Output:
+    observations: list[SlotObservation] = field(default_factory=list)
+    strays: list[StrayItem] = field(default_factory=list)
     events: list[Event] = field(default_factory=list)
     tasks: list[Task] = field(default_factory=list)
     missions: list[Mission] = field(default_factory=list)
 
 
 class Brain:
-    def __init__(self, cfg: BrainConfig, known_skus: set[str]):
+    def __init__(self, cfg: BrainConfig, known_skus: set[str], planograms: PlanogramStore):
         self.cfg = cfg
         self.known_skus = known_skus
+        self.planograms = planograms
         self.summary = Summary()
 
     def handle(self, reading: BayReading) -> Output:
@@ -105,12 +126,20 @@ class Brain:
             self.summary.untrusted += 1
             return Output()
         self.summary.trusted += 1
-        return Output()  # matcher -> shelf state -> tracker -> decision arrive in later steps
+        plan = self.planograms.get(reading.bay_id)
+        if plan is None:
+            self.summary.no_planogram.add(reading.bay_id)
+            return Output()
+        m = match(plan, reading)
+        self.summary.slot_status.update(o.status for o in m.slots)
+        self.summary.strays.update(s.kind for s in m.strays)
+        # shelf state -> tracker -> decision arrive in later steps
+        return Output(observations=m.slots, strays=m.strays)
 
 
 def run(readings_path: Path, out_dir: Path, cfg: BrainConfig, sku_master: Path) -> Summary:
     readings = sorted(bus.read_jsonl(readings_path, BayReading), key=lambda r: r.t)
-    brain = Brain(cfg, set(load_sku_master(sku_master)))
+    brain = Brain(cfg, set(load_sku_master(sku_master)), PlanogramStore(cfg.planograms.dirs))
 
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = {name: out_dir / name for name in OUTPUT_FILES}
@@ -119,6 +148,8 @@ def run(readings_path: Path, out_dir: Path, cfg: BrainConfig, sku_master: Path) 
 
     for reading in readings:
         out = brain.handle(reading)
+        bus.append_jsonl(paths["observations.jsonl"], out.observations)
+        bus.append_jsonl(paths["strays.jsonl"], out.strays)
         bus.append_jsonl(paths["events.jsonl"], out.events)
         bus.append_jsonl(paths["tasks.jsonl"], out.tasks)
         bus.append_jsonl(paths["missions.jsonl"], out.missions)
@@ -135,6 +166,9 @@ def main(argv: list[str] | None = None) -> int:
 
     s = run(args.readings, args.out, load_brain_config(args.config), args.sku_master)
     print(f"{s.readings} readings: {s.trusted} trusted, {s.untrusted} below quality threshold")
+    print(f"slots: {dict(sorted(s.slot_status.items()))}  strays: {dict(sorted(s.strays.items()))}")
+    if s.no_planogram:
+        print(f"warning: no planogram for bays {sorted(s.no_planogram)}", file=sys.stderr)
     if s.unknown_skus:
         print(f"warning: SKUs not in sku_master: {sorted(s.unknown_skus)}", file=sys.stderr)
     return 0
