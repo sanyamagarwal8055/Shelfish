@@ -9,6 +9,9 @@ A gold reading with no prediction scores as an empty prediction.
 - facing-count error: mean |pred packs - gold packs| over every gold row.
 - SKU accuracy: gold packs whose x-matched prediction (same row, x-IoU >= 0.5) has the same sku.
 - gap recall: gold gaps covered by a predicted gap with x-IoU >= 0.5.
+- depth_left: over x-matched packs whose gold depth_left is known: share exactly right (a null
+  prediction counts as wrong) and mean absolute error over the non-null ones. Shown only when
+  the gold has depth.
 """
 
 from __future__ import annotations
@@ -34,6 +37,10 @@ class Score:
     sku_correct: int = 0
     gaps: int = 0
     gaps_found: int = 0
+    depth_n: int = 0  # matched packs with a gold depth_left
+    depth_exact: int = 0
+    depth_read: int = 0  # ... where the prediction has a depth_left
+    depth_abs_err: int = 0
 
     def add(self, other: Score) -> None:
         for k in vars(self):
@@ -50,6 +57,14 @@ class Score:
     @property
     def gap_recall(self) -> float | None:
         return self.gaps_found / self.gaps if self.gaps else None
+
+    @property
+    def depth_acc(self) -> float | None:
+        return self.depth_exact / self.depth_n if self.depth_n else None
+
+    @property
+    def depth_mae(self) -> float | None:
+        return self.depth_abs_err / self.depth_read if self.depth_read else None
 
 
 @dataclass
@@ -102,6 +117,15 @@ def score_bay(pred: BayReading | None, gold: BayReading) -> Score:
             for k, pi in zip(g.packs, m, strict=True)
             if pi is not None and p_packs[pi].sku == k.sku
         )
+        for k, pi in zip(g.packs, m, strict=True):
+            if pi is None or k.depth_left is None:
+                continue
+            s.depth_n += 1
+            got = p_packs[pi].depth_left
+            if got is not None:
+                s.depth_read += 1
+                s.depth_abs_err += abs(got - k.depth_left)
+                s.depth_exact += got == k.depth_left
 
         m = match(
             [(k.x_cm, k.x_cm + k.w_cm) for k in g.gaps], [(k.x_cm, k.x_cm + k.w_cm) for k in p_gaps]
@@ -154,6 +178,12 @@ def format_report(rep: Report, per_bay: bool = True) -> str:
     lines.append(f"  facing-count error  {o.facing_err:.2f} packs per row")
     lines.append(f"  SKU accuracy        {_pct(o.sku_acc, o.sku_correct, o.packs).strip()}")
     lines.append(f"  gap recall          {_pct(o.gap_recall, o.gaps_found, o.gaps).strip()}")
+    if o.depth_n:
+        mae = "n/a" if o.depth_mae is None else f"{o.depth_mae:.2f}"
+        lines.append(
+            f"  depth_left exact    {_pct(o.depth_acc, o.depth_exact, o.depth_n).strip()}"
+            f"  (mean abs error {mae} packs over {o.depth_read} read)"
+        )
     return "\n".join(lines)
 
 

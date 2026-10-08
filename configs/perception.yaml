@@ -54,3 +54,9 @@ identify:
   location_bonus: 0.05 # added when the SKU is the one planned at that x
   size_bonus: 0.05 # times size_match (pack width vs sku_master)
   size_tol: 0.25
+
+# depth_left from an aligned depth map (step 6). Shelf depth comes from configs/store_layout.yaml.
+depth:
+  mm_per_unit: 1.0 # depth map units (uint16 mm from the camera; 0 = no reading)
+  round_tol: 0.15 # packs of measurement noise absorbed before rounding up
+  min_valid_frac: 0.3 # share of a region that must have a reading

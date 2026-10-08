@@ -4,7 +4,8 @@
 
 Folder: every .jpg/.jpeg/.png, sorted by name. t = --start + 1 min per image, else the file's
 modified time. Video: one frame every --every seconds; t = --start (else the file's modified
-time) + offset into the video.
+time) + offset into the video. --depth-dir: a depth map per image, same file stem as the image,
+.png (16-bit, mm from the camera); tools/synth --depth writes these to <out>/depth/.
 """
 
 from __future__ import annotations
@@ -40,6 +41,16 @@ def bay_from_name(frame_ref: str) -> str | None:
 
 def _mtime(path: Path) -> datetime:
     return datetime.fromtimestamp(path.stat().st_mtime).astimezone()
+
+
+def read_depth(depth_dir: Path | None, frame_ref: str) -> np.ndarray | None:
+    """The depth map for an image, matched by file stem; None if there isn't one."""
+    if depth_dir is None:
+        return None
+    path = depth_dir / f"{Path(frame_ref.split('#', 1)[0]).stem}.png"
+    if not path.is_file():
+        return None
+    return cv2.imdecode(np.fromfile(str(path), dtype=np.uint8), cv2.IMREAD_UNCHANGED)
 
 
 def _read_image(path: Path) -> np.ndarray:
@@ -95,6 +106,7 @@ def run(
     every_s: float = 60.0,
     undistort_k1: float = 0.0,
     pipeline: Pipeline | None = None,
+    depth_dir: Path | None = None,
 ) -> int:
     """Analyse every image/frame, write validated JSON lines to `out`. Returns the line count.
 
@@ -112,8 +124,11 @@ def run(
     with open(out, "w", encoding="utf-8") as f:
         for img, t, ref in frames:
             img = undistort_radial(img, undistort_k1)
+            dmap = read_depth(depth_dir, ref)
+            if dmap is not None:
+                dmap = undistort_radial(dmap, undistort_k1, nearest=True)
             bay = bay_id or bay_from_name(ref) or DEFAULT_BAY
-            reading = analyze(img, bay, source, t, frame_ref=ref, pipeline=pipeline)
+            reading = analyze(img, bay, source, t, ref, pipeline, dmap)
             line = to_json_dict(reading)
             parse_bay_reading(line)  # never write a line the Brain would reject
             f.write(json.dumps(line) + "\n")
@@ -145,6 +160,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--start", type=_aware, help="ISO time of the first frame, with timezone")
     ap.add_argument("--every", type=float, default=60.0, help="video: seconds between frames")
     ap.add_argument("--detector", choices=["classic", "yolo"], help="override the config backend")
+    ap.add_argument("--depth-dir", type=Path, help="depth maps (<image stem>.png) for depth_left")
     ap.add_argument(
         "--undistort-synth",
         action="store_true",
@@ -155,7 +171,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         pipeline = load_pipeline(backend=args.detector)
         n = run(
-            args.input, args.out, args.bay_id, args.source, args.start, args.every, k1, pipeline
+            args.input,
+            args.out,
+            args.bay_id,
+            args.source,
+            args.start,
+            args.every,
+            k1,
+            pipeline,
+            args.depth_dir,
         )
     except (ValueError, FileNotFoundError) as e:
         print(f"error: {e}", file=sys.stderr)

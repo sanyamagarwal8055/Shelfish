@@ -51,6 +51,8 @@ BACKGROUND = (205, 210, 215)  # BGR shelf back panel
 RAIL_COLOUR = (60, 85, 120)
 PERSON_COLOUR = (55, 45, 40)
 DISTORT_K = 0.12  # barrel strength
+CAMERA_MM = 2000  # depth maps: a camera 2 m across the aisle from the shelf edge
+PERSON_MM = 500  # a person stands this far in front of the shelf edge
 DEFAULT_START = "2026-10-08T09:00:00+05:30"
 
 
@@ -340,14 +342,16 @@ def render(
     img = np.full((h_px, w_px, 3), BACKGROUND, np.uint8)
     noise = rng.integers(-6, 7, size=img.shape, dtype=np.int16)
     img = np.clip(img.astype(np.int16) + noise, 0, 255).astype(np.uint8)
-    # Depth in mm from the shelf-edge plane: empty shelf = back panel, rails = 0.
-    depth = np.full((h_px, w_px), round(geo.shelf_depth_cm * 10), np.uint16) if with_depth else None
+    # Depth like a stereo camera: mm from the camera (0 = no reading). Rails sit at CAMERA_MM,
+    # the empty shelf's back panel shelf_depth further, a pack front at its recess.
+    back = CAMERA_MM + round(geo.shelf_depth_cm * 10)
+    depth = np.full((h_px, w_px), back, np.uint16) if with_depth else None
 
     for r in ROWS:
         y0, y1 = geo.y_px(r * geo.pitch_cm + RAIL_CM), geo.y_px(r * geo.pitch_cm)
         img[y0:y1] = RAIL_COLOUR
         if depth is not None:
-            depth[y0:y1] = 0
+            depth[y0:y1] = CAMERA_MM
 
     for p in packs:
         x0 = round(p.x * PX_PER_CM)
@@ -356,7 +360,7 @@ def render(
         ph, pw = patch.shape[:2]
         img[y1 - ph : y1, x0 : x0 + pw] = patch[:, : w_px - x0]
         if depth is not None:
-            depth[y1 - ph : y1, x0 : x0 + pw] = round(recess_cm(p, skus, geo) * 10)
+            depth[y1 - ph : y1, x0 : x0 + pw] = CAMERA_MM + round(recess_cm(p, skus, geo) * 10)
 
     if occ is not None:
         x0, x1 = round(occ.x0 * PX_PER_CM), round(occ.x1 * PX_PER_CM)
@@ -366,8 +370,9 @@ def render(
         cv2.rectangle(img, (x0, body_top), (x1, h_px - 1), PERSON_COLOUR, -1)
         cv2.circle(img, ((x0 + x1) // 2, head_top + head_r), head_r, PERSON_COLOUR, -1)
         if depth is not None:
-            cv2.rectangle(depth, (x0, body_top), (x1, h_px - 1), 0, -1)
-            cv2.circle(depth, ((x0 + x1) // 2, head_top + head_r), head_r, 0, -1)
+            near = CAMERA_MM - PERSON_MM
+            cv2.rectangle(depth, (x0, body_top), (x1, h_px - 1), near, -1)
+            cv2.circle(depth, ((x0 + x1) // 2, head_top + head_r), head_r, near, -1)
     return img, depth
 
 
