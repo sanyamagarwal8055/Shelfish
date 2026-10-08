@@ -13,6 +13,8 @@ A gold reading with no prediction scores as an empty prediction.
 - depth_left: over x-matched packs whose gold depth_left is known: share exactly right (a null
   prediction counts as wrong) and mean absolute error over the non-null ones. Shown only when
   the gold has depth.
+- labels (robot readings): gold labels found in the same row with the same sku within 3 cm of x
+  (recall), share of predicted labels that match one (precision), and matched prices exact.
 """
 
 from __future__ import annotations
@@ -42,6 +44,10 @@ class Score:
     depth_exact: int = 0
     depth_read: int = 0  # ... where the prediction has a depth_left
     depth_abs_err: int = 0
+    labels: int = 0  # gold labels
+    labels_pred: int = 0
+    labels_found: int = 0
+    labels_price_ok: int = 0
 
     def add(self, other: Score) -> None:
         for k in vars(self):
@@ -128,6 +134,18 @@ def score_bay(pred: BayReading | None, gold: BayReading) -> Score:
                 s.depth_abs_err += abs(got - k.depth_left)
                 s.depth_exact += got == k.depth_left
 
+        p_labels = list(p.labels) if p else []
+        s.labels += len(g.labels)
+        s.labels_pred += len(p_labels)
+        for gl in g.labels:
+            hit = next(
+                (pl for pl in p_labels if pl.sku == gl.sku and abs(pl.x_cm - gl.x_cm) <= 3), None
+            )
+            if hit is not None:
+                p_labels.remove(hit)
+                s.labels_found += 1
+                s.labels_price_ok += abs(hit.price - gl.price) < 0.005
+
         m = match(
             [(k.x_cm, k.x_cm + k.w_cm) for k in g.gaps], [(k.x_cm, k.x_cm + k.w_cm) for k in p_gaps]
         )
@@ -180,6 +198,13 @@ def format_report(rep: Report, per_bay: bool = True) -> str:
     lines.append(f"  facing-count error  {o.facing_err:.2f} packs per row")
     lines.append(f"  SKU accuracy        {_pct(o.sku_acc, o.sku_correct, o.packs).strip()}")
     lines.append(f"  gap recall          {_pct(o.gap_recall, o.gaps_found, o.gaps).strip()}")
+    if o.labels:
+        prec = o.labels_found / o.labels_pred if o.labels_pred else 0.0
+        lines.append(
+            "  labels found        "
+            f"{_pct(o.labels_found / o.labels, o.labels_found, o.labels).strip()}"
+            f"  (precision {prec:.1%}, prices exact {o.labels_price_ok}/{o.labels_found})"
+        )
     if o.depth_n:
         mae = "n/a" if o.depth_mae is None else f"{o.depth_mae:.2f}"
         lines.append(

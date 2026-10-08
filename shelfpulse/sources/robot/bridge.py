@@ -10,7 +10,8 @@ than configs/robot.yaml people.max_person_cover of it, the bay goes to skipped_b
 re-queues it); otherwise it is blurred, saved under <out>/frames/<bay>/ and analysed with
 source="robot" (depth gives depth_left). Writes <out>/bay_readings.jsonl and
 <out>/robot_status.jsonl (one RobotStatus per change), both appended so they can follow a run's
-camera readings. Shelf-edge labels are [] until label reading (step 7b).
+camera readings. Shelf-edge price labels are read with OCR from the full-resolution stitch
+(perception/labels.py) into each row's labels; without the OCR package they stay [].
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from shelfpulse.contracts import (
 )
 from shelfpulse.layout import store_map
 from shelfpulse.perception.analyze import Pipeline, analyze, default_pipeline
+from shelfpulse.perception.labels import LabelReader
 from shelfpulse.perception.privacy import blur_people
 from shelfpulse.perception.shelves import find_shelves
 from shelfpulse.sources.robot import people_guard
@@ -63,6 +65,7 @@ class Bridge:
         out: Path,
         pipeline: Pipeline | None = None,
         max_person_cover: float | None = None,
+        read_labels: bool = True,
     ):
         self.api = api
         self.out = out
@@ -70,6 +73,7 @@ class Bridge:
         robot = load_robot_config()
         cover = robot.people.max_person_cover
         self.max_cover = cover if max_person_cover is None else max_person_cover
+        self.labels = LabelReader(self.pipeline.skus or {}) if read_labels else None
         self.readings: list[BayReading] = []
         self.statuses: list[RobotStatus] = []
 
@@ -132,7 +136,7 @@ class Bridge:
     def _finish_bay(self, bay_id: str, stitcher: Stitcher, t) -> bool:
         if not stitcher.complete(bay_id):
             return False  # not fully seen (no frames, or the pass was cut short)
-        _, img, depth = stitcher.render(bay_id)
+        full, img, depth = stitcher.render(bay_id)
         px_per_cm = img.shape[1] / BAY_WIDTH_CM
         shelves = find_shelves(img, px_per_cm, self.pipeline.shelves, depth)
         verdict = people_guard.check(depth, shelves, self.max_cover,
@@ -147,10 +151,23 @@ class Bridge:
             raise ValueError(f"cannot encode frame for {bay_id}")
         buf.tofile(str(self.out / rel))
         reading = analyze(safe, bay_id, "robot", t, rel.as_posix(), self.pipeline, depth)
+        reading = self._with_labels(reading, full, shelves, px_per_cm, stitcher.px_per_cm)
         parse_bay_reading(to_json_dict(reading))  # never write a line the Brain would reject
         _append(self.out / "bay_readings.jsonl", reading)
         self.readings.append(reading)
         return True
+
+    def _with_labels(self, reading: BayReading, full, shelves, px_per_cm, full_px_per_cm):
+        if self.labels is None:
+            return reading
+        try:
+            per_row = self.labels.read(full, shelves, px_per_cm, full_px_per_cm)
+        except ImportError:
+            print("note: rapidocr-onnxruntime not installed; labels stay []", file=sys.stderr)
+            self.labels = None
+            return reading
+        rows = [r.model_copy(update={"labels": per_row.get(r.row, [])}) for r in reading.rows]
+        return reading.model_copy(update={"rows": rows})
 
 
 def run(
@@ -160,10 +177,11 @@ def run(
     people: set[str] = frozenset(),
     seed: int = 0,
     pipeline: Pipeline | None = None,
+    read_labels: bool = True,
 ) -> Bridge:
     out.mkdir(parents=True, exist_ok=True)
     api = FakeVendorAPI(store_map.load(), recording, people=people, seed=seed)
-    bridge = Bridge(api, out, pipeline)
+    bridge = Bridge(api, out, pipeline, read_labels=read_labels)
     for m in sorted(missions, key=lambda m: m.created_at):
         bridge.run_mission(m)
     return bridge

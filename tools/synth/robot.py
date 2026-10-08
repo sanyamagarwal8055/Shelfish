@@ -85,22 +85,53 @@ def plan_labels(plano: Planogram, skus: dict[str, SkuRow]) -> dict[int, list[Lab
     }
 
 
-def draw_labels(img: np.ndarray, labels: dict[int, list[Label]], geo: Geometry, px: float):
-    """White price tags on the rails: product id on top, price below."""
+def _wrap(text: str, width_px: int, scale: float) -> list[str] | None:
+    """Words of text in at most two lines that fit width_px at this font scale."""
+    lines, cur = [], ""
+    for w in text.split():
+        trial = f"{cur} {w}".strip()
+        if cv2.getTextSize(trial, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)[0][0] <= width_px:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = w
+    lines.append(cur)
+    lines = [ln for ln in lines if ln]
+    fits = all(cv2.getTextSize(ln, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)[0][0] <= width_px
+               for ln in lines)  # fmt: skip
+    return lines if len(lines) <= 2 and fits else None
+
+
+def draw_labels(
+    img: np.ndarray,
+    labels: dict[int, list[Label]],
+    skus: dict[str, SkuRow],
+    geo: Geometry,
+    px: float,
+    slot_ends: dict[int, list[float]],
+) -> None:
+    """White price tags on the rails, like real shelf-edge labels: the product's name (up to two
+    lines) and its price, the tag as wide as the slot allows (max 14 cm)."""
     k = px / PX_PER_CM
+    font, aa = cv2.FONT_HERSHEY_SIMPLEX, cv2.LINE_AA
     for r, row in labels.items():
         y0 = round(geo.y_px(r * geo.pitch_cm + RAIL_CM) * k) + 2
         y1 = round(geo.y_px(r * geo.pitch_cm) * k) - 2
-        for lb in row:
+        line_h = (y1 - y0) // 3
+        for lb, end in zip(row, slot_ends[r], strict=True):
             x0 = round((lb.x_cm + 0.5) * px)
-            x1 = min(x0 + round(9 * px), img.shape[1] - 1)
+            x1 = min(round(min(end - 0.5, lb.x_cm + 14.5) * px), img.shape[1] - 1)
             cv2.rectangle(img, (x0, y0), (x1, y1), (250, 250, 250), -1)
             scale = 0.022 * px
-            font, aa = cv2.FONT_HERSHEY_SIMPLEX, cv2.LINE_AA
-            name_y = y0 + round(0.45 * (y1 - y0))
-            cv2.putText(img, lb.sku[:12], (x0 + 3, name_y), font, scale, (20, 20, 20), 1, aa)
-            text = f"Rs {lb.price:.2f}"
-            cv2.putText(img, text, (x0 + 3, y1 - 4), font, scale * 1.1, (20, 20, 160), 1, aa)
+            lines = None
+            while lines is None and scale > 0.012 * px:
+                lines = _wrap(skus[lb.sku].name, x1 - x0 - 6, scale)
+                scale = scale if lines else scale * 0.9
+            for n, text in enumerate(lines or [lb.sku]):
+                cv2.putText(img, text, (x0 + 3, y0 + line_h * (n + 1) - 3), font, scale,
+                            (20, 20, 20), 1, aa)  # fmt: skip
+            price_text = f"Rs {lb.price:.2f}"
+            cv2.putText(img, price_text, (x0 + 3, y1 - 4), font, 0.024 * px, (20, 20, 160), 1, aa)
 
 
 def render_pass(
@@ -142,7 +173,8 @@ def render_pass(
     img = cv2.resize(img10, (w, h), interpolation=cv2.INTER_CUBIC)
     depth = cv2.resize(d10, (w, h), interpolation=cv2.INTER_NEAREST).astype(np.int32)
     depth = np.where(depth > 0, depth - (CAMERA_MM - ROBOT_CAMERA_MM), 0).astype(np.uint16)
-    draw_labels(img, labels, geo, ROBOT_PX_PER_CM)
+    ends = {r: [sl.x_end_cm for sl in slots] for r, slots in enumerate(plano.rows)}
+    draw_labels(img, labels, skus, geo, ROBOT_PX_PER_CM, ends)
 
     # Frames every FRAME_STEP_CM, FRAME_WIDTH_CM wide, cropped to the bay at its ends (the
     # neighbours aren't drawn, so no frame may show them); a frame's pose is its centre.
