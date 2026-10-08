@@ -68,14 +68,22 @@ class Event(_Model):
 
 
 class Task(_Model):
+    """One staff (or manager) job. tasks.jsonl logs a snapshot each time a task changes."""
+
     id: str = Field(pattern=r"^T-\d+$")
     priority: Literal["P1", "P2", "P3"]
     action: TaskAction
     sku_id: SkuRef
-    bay: BayId
+    bay: BayId  # where to act (for RETURN: the bay to take the pack back to)
+    row: int = Field(ge=0, le=5)  # where the problem was seen
+    position: int | None = None
+    seen_bay: BayId  # where the problem was seen (differs from bay for RETURN)
     qty: int = Field(ge=0)
     cause: str
     rupees_per_h: float = Field(ge=0.0)
+    assignee: Literal["staff", "manager", "loss_prevention"]  # loss_prevention notes are silent
     status: TaskStatus = "OPEN"
     created_at: AwareDatetime
+    updated_at: AwareDatetime
     closed_at: AwareDatetime | None = None
+    time_to_restore_min: float | None = None  # alert start -> verified fix

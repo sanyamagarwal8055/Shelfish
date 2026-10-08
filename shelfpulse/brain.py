@@ -6,15 +6,19 @@ Phase 1 reads a whole JSON-lines file in time order and writes into --out (each 
 observations.jsonl (status per planogram slot), strays.jsonl (misplaced / unknown / ambiguous
 packs), events.jsonl, tasks.jsonl and missions.jsonl. Readings below the contract quality
 threshold count as unseen. The reading clock drives everything; there is no datetime.now() here.
+
+POS and stock data (pos.csv, inventory.csv) are read from --store-data, by default the folder of
+the readings file. Without them alerts still become tasks, with cause NO_STORE_DATA.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from collections.abc import Hashable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -24,11 +28,16 @@ from shelfpulse.config import REPO_ROOT, load_yaml
 from shelfpulse.contracts import (
     BayReading,
     Mission,
+    SkuRow,
     check_skus,
     is_trusted,
     load_sku_master,
     reading_skus,
 )
+from shelfpulse.decision.diagnosis import DiagnosisCfg, diagnose
+from shelfpulse.decision.priority import PriorityCfg, bucket, rupees_per_h
+from shelfpulse.decision.store_data import StoreData
+from shelfpulse.decision.tasks import SLOT_KINDS, Plan, TaskBook, plans_for_slot
 from shelfpulse.decision.types import Event, SlotObservation, StrayItem, Task
 from shelfpulse.planogram.loader import PlanogramStore
 from shelfpulse.planogram.matcher import MatchResult, match
@@ -89,6 +98,8 @@ class BrainConfig(_Cfg):
     fusion: FusionCfg
     blocked: BlockedCfg
     missions: MissionsCfg
+    diagnosis: DiagnosisCfg
+    priority: PriorityCfg
     sim: SimCfg
 
 
@@ -114,6 +125,8 @@ class Summary:
     slot_status: Counter[str] = field(default_factory=Counter)
     strays: Counter[str] = field(default_factory=Counter)
     events: Counter[str] = field(default_factory=Counter)
+    tasks: Counter[str] = field(default_factory=Counter)  # new tasks by action
+    store_data: bool = False
 
 
 @dataclass
@@ -126,11 +139,25 @@ class Output:
 
 
 class Brain:
-    def __init__(self, cfg: BrainConfig, known_skus: set[str], planograms: PlanogramStore):
+    def __init__(
+        self,
+        cfg: BrainConfig,
+        skus: dict[str, SkuRow],
+        planograms: PlanogramStore,
+        store_data: StoreData | None = None,
+        shelf_depth_cm: float = 45.0,
+    ):
         self.cfg = cfg
-        self.known_skus = known_skus
+        self.skus = skus
+        self.known_skus = set(skus)
         self.planograms = planograms
-        self.summary = Summary()
+        self.store_data = store_data
+        self.shelf_depth_cm = shelf_depth_cm
+        self.summary = Summary(store_data=store_data is not None)
+        self.tasks = TaskBook()
+        self._seen_tasks: set[str] = set()
+        self._last_obs: dict[Hashable, SlotObservation] = {}
+        self._history: dict[Hashable, deque[tuple[datetime, int]]] = defaultdict(deque)
         t = cfg.tracker
         self.tracker = SlotTracker(t.k, t.n, t.clear_after, t.robot_overrides)
         self._meta: dict[Hashable, tuple[int, int | None, str]] = {}  # key -> row, position, sku
@@ -150,10 +177,71 @@ class Brain:
         m = match(plan, reading)
         self.summary.slot_status.update(o.status for o in m.slots)
         self.summary.strays.update(s.kind for s in m.strays)
+        self._remember(m.slots)
         events = self._track(reading, m)
         self.summary.events.update(e.kind for e in events)
-        # shelf state (fusion, quantity) and decision (diagnosis, tasks) arrive in later steps
-        return Output(observations=m.slots, strays=m.strays, events=events)
+        tasks = [t for e in events for t in self._decide(e)]
+        for t in tasks:
+            if t.id not in self._seen_tasks:
+                self._seen_tasks.add(t.id)
+                self.summary.tasks[t.action] += 1
+        # shelf state (camera/robot fusion, sales-based quantity) arrives in a later step
+        return Output(observations=m.slots, strays=m.strays, events=events, tasks=tasks)
+
+    # --- shelf memory for diagnosis --------------------------------------------------------------
+
+    def _remember(self, slots: list[SlotObservation]) -> None:
+        """Keep each seen slot's latest observation and its recent pack counts."""
+        keep = timedelta(minutes=self.cfg.diagnosis.theft_window_min * 2)
+        for o in slots:
+            if o.status == "UNKNOWN":
+                continue
+            key = ("slot", o.bay_id, o.row, o.position)
+            self._last_obs[key] = o
+            h = self._history[key]
+            h.append((o.t, o.units if o.units is not None else o.facings))
+            while h and o.t - h[0][0] > keep:
+                h.popleft()
+
+    def _shelf_units(self, sku: str) -> int:
+        return sum(
+            o.units if o.units is not None else o.facings
+            for o in self._last_obs.values()
+            if o.sku == sku
+        )
+
+    # --- decision --------------------------------------------------------------------------------
+
+    def _decide(self, e: Event) -> list[Task]:
+        if e.kind == "RESOLVED":
+            return self.tasks.verify(e)
+        sku = self.skus.get(e.sku)
+        margin = sku.margin_inr if sku else 0.0
+        velocity = 0.0
+        if self.store_data is not None:
+            p = self.cfg.priority
+            velocity = self.store_data.velocity(e.sku, e.t, p.velocity_window_h,
+                                                p.min_velocity_span_h)  # fmt: skip
+        rupees = rupees_per_h(e.kind, velocity, margin, self.cfg.priority)
+
+        def prio(action: str, r: float) -> str:
+            return bucket(r, action, self.cfg.priority)
+
+        if e.kind in SLOT_KINDS:
+            key = ("slot", e.bay_id, e.row, e.position)
+            obs, history = self._last_obs[key], list(self._history[key])
+            depth_cap = max(1, int(self.shelf_depth_cm // sku.depth_cm)) if sku else 1
+            now = history[-1][1] if history else 0
+            need = max(0, obs.planned_facings * depth_cap - now)
+            d = diagnose(e.sku, e.since or e.t, e.t, history, self._shelf_units(e.sku),
+                         self.store_data, self.cfg.diagnosis)  # fmt: skip
+            plans = plans_for_slot(d, e.bay_id, need, rupees, prio)
+        elif e.kind == "MISPLACED":
+            home = sku.home_bay if sku else e.bay_id
+            plans = [Plan("RETURN", home, 1, "MISPLACED", 0.0, prio("RETURN", 0.0), "staff")]
+        else:  # UNKNOWN_ITEM
+            plans = [Plan("ENROL", e.bay_id, 1, "UNKNOWN_ITEM", 0.0, prio("ENROL", 0.0), "staff")]
+        return self.tasks.upsert(e, plans)
 
     def _track(self, reading: BayReading, m: MatchResult) -> list[Event]:
         """Feed slot statuses and strays to the k-of-n tracker; return the confirmed changes."""
@@ -203,9 +291,28 @@ class Brain:
         return events
 
 
-def run(readings_path: Path, out_dir: Path, cfg: BrainConfig, sku_master: Path) -> Summary:
+def load_store_data(folder: Path | None) -> StoreData | None:
+    """pos.csv + inventory.csv from `folder`, or None if either is missing."""
+    if folder is None:
+        return None
+    pos, inv = folder / "pos.csv", folder / "inventory.csv"
+    return StoreData.from_csv(pos, inv) if pos.exists() and inv.exists() else None
+
+
+def run(
+    readings_path: Path,
+    out_dir: Path,
+    cfg: BrainConfig,
+    sku_master: Path,
+    store_data_dir: Path | None | bool = True,
+) -> Summary:
+    """store_data_dir: a folder with pos.csv + inventory.csv; True = the readings' folder;
+    None/False = no store data."""
     readings = sorted(bus.read_jsonl(readings_path, BayReading), key=lambda r: r.t)
-    brain = Brain(cfg, set(load_sku_master(sku_master)), PlanogramStore(cfg.planograms.dirs))
+    folder = readings_path.parent if store_data_dir is True else (store_data_dir or None)
+    depth = float(load_yaml("store_layout")["bay"]["depth_cm"])
+    brain = Brain(cfg, load_sku_master(sku_master), PlanogramStore(cfg.planograms.dirs),
+                  load_store_data(folder), depth)  # fmt: skip
 
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = {name: out_dir / name for name in OUTPUT_FILES}
@@ -228,12 +335,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, required=True, help="output folder, e.g. runs/<id>/")
     ap.add_argument("--config", default="brain", help="brain config name or path")
     ap.add_argument("--sku-master", type=Path, default=REPO_ROOT / "data" / "sku_master.csv")
+    ap.add_argument("--store-data", type=Path, help="folder with pos.csv + inventory.csv "
+                    "(default: the readings' folder)")  # fmt: skip
+    ap.add_argument("--no-store-data", action="store_true", help="ignore POS / stock data")
     args = ap.parse_args(argv)
 
-    s = run(args.readings, args.out, load_brain_config(args.config), args.sku_master)
+    store = False if args.no_store_data else (args.store_data or True)
+    s = run(args.readings, args.out, load_brain_config(args.config), args.sku_master, store)
     print(f"{s.readings} readings: {s.trusted} trusted, {s.untrusted} below quality threshold")
     print(f"slots: {dict(sorted(s.slot_status.items()))}  strays: {dict(sorted(s.strays.items()))}")
     print(f"events: {dict(sorted(s.events.items()))}")
+    print(f"new tasks: {dict(sorted(s.tasks.items()))}"
+          + ("" if s.store_data else "  (no POS/stock data: causes unknown)"))  # fmt: skip
     if s.no_planogram:
         print(f"warning: no planogram for bays {sorted(s.no_planogram)}", file=sys.stderr)
     if s.unknown_skus:

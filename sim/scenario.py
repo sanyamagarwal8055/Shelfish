@@ -15,6 +15,7 @@ Events (`do:`), applied at the start of their minute, before that minute's frame
     quality      bay value [until]         camera frames of the bay get this quality score
     misread      source bay row position units [until]   that source sees `units` packs there
     ambiguous    sku candidates [until]    Vision reports the sku as AMBIGUOUS:<candidates>
+    unidentified sku [until]               Vision reports the sku as UNKNOWN (not recognised)
     set_system   sku qty                   the stock system's on-hand count is set to qty
 
 `until` is exclusive and defaults to one minute after `at` (a single frame).
@@ -46,6 +47,7 @@ REQUIRED = {
     "quality": ("bay", "value"),
     "misread": ("source", "bay", "row", "position", "units"),
     "ambiguous": ("sku", "candidates"),
+    "unidentified": ("sku",),
     "set_system": ("sku", "qty"),
 }
 
@@ -58,7 +60,7 @@ class SimEvent(_Model):
     at: HHMM
     do: Literal[
         "sell", "theft", "restock", "face_up", "misplace", "unmisplace", "occlude", "quality",
-        "misread", "ambiguous", "set_system",
+        "misread", "ambiguous", "unidentified", "set_system",
     ]  # fmt: skip
     bay: BayId | None = None
     row: int | None = Field(default=None, ge=0, le=5)

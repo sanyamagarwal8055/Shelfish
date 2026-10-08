@@ -22,6 +22,20 @@ blocked:
 missions:
   footfall_tx_per_10min_max: 25 # no missions while POS sales in the last 10 min exceed this
 
+diagnosis: # why a slot is empty, checked in this order: theft, restock, phantom, stockout
+  theft_window_min: 10 # look this far back before the alert for a sudden drop
+  theft_min_units: 5 # a drop this big ...
+  theft_max_sales_frac: 0.2 # ... with at most this share of it sold at the till = theft
+  phantom_min_units: 5 # system on-hand minus shelves minus backroom >= this = wrong count
+
+priority: # rupees lost per hour = velocity (packs/h) x margin (Rs/pack)
+  velocity_window_h: 168 # trailing sales window (7 days)
+  min_velocity_span_h: 1.0 # never divide by less than this, so a short history isn't inflated
+  low_weight: 0.5 # a LOW slot still sells: count half its rate
+  p1_min_rupees_per_h: 100
+  p2_min_rupees_per_h: 20
+  min_priority: { LOSS_PREVENTION: P1, CYCLE_COUNT: P2, REORDER: P2 }
+
 sim: # store simulator (sim/): how the fake Vision track reports
   camera_interval_s: 60 # locked design: 1 frame per minute
   camera_quality: 0.92
