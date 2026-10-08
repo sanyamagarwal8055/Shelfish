@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections.abc import Iterator
 from datetime import datetime, timedelta
@@ -19,12 +20,22 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from shelfpulse.config import load_yaml
 from shelfpulse.contracts import BAY_ID_RE, parse_bay_reading, to_json_dict
-from shelfpulse.perception.analyze import analyze
+from shelfpulse.perception.analyze import Pipeline, analyze, load_pipeline
+from shelfpulse.perception.rectify import undistort_radial
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
 VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv"}
 FOLDER_STEP = timedelta(minutes=1)
+DEFAULT_BAY = "G1-L-04"
+_BAY_IN_NAME = re.compile(BAY_ID_RE.pattern.strip("^$"))
+
+
+def bay_from_name(frame_ref: str) -> str | None:
+    """`images/0003_G1-L-04.jpg` -> "G1-L-04" (tools/synth names frames this way)."""
+    m = _BAY_IN_NAME.search(Path(frame_ref.split("#", 1)[0]).stem)
+    return m.group(0) if m else None
 
 
 def _mtime(path: Path) -> datetime:
@@ -78,12 +89,17 @@ def iter_video(
 def run(
     input_path: Path,
     out: Path,
-    bay_id: str,
+    bay_id: str | None,
     source: str,
     start: datetime | None = None,
     every_s: float = 60.0,
+    undistort_k1: float = 0.0,
+    pipeline: Pipeline | None = None,
 ) -> int:
-    """Analyse every image/frame, write validated JSON lines to `out`. Returns the line count."""
+    """Analyse every image/frame, write validated JSON lines to `out`. Returns the line count.
+
+    bay_id None: taken from each file name if it contains one, else G1-L-04.
+    """
     if input_path.is_dir():
         frames = iter_folder(input_path, start)
     elif input_path.suffix.lower() in VIDEO_EXTS:
@@ -95,7 +111,9 @@ def run(
     n = 0
     with open(out, "w", encoding="utf-8") as f:
         for img, t, ref in frames:
-            reading = analyze(img, bay_id=bay_id, source=source, t=t, frame_ref=ref)
+            img = undistort_radial(img, undistort_k1)
+            bay = bay_id or bay_from_name(ref) or DEFAULT_BAY
+            reading = analyze(img, bay, source, t, frame_ref=ref, pipeline=pipeline)
             line = to_json_dict(reading)
             parse_bay_reading(line)  # never write a line the Brain would reject
             f.write(json.dumps(line) + "\n")
@@ -122,14 +140,24 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m shelfpulse.perception.run", description=__doc__)
     ap.add_argument("--input", required=True, type=Path, help="folder of images or a video")
     ap.add_argument("--out", required=True, type=Path, help="runs/<id>/bay_readings.jsonl")
-    ap.add_argument("--bay-id", default="G1-L-04", type=_bay_id)
+    ap.add_argument("--bay-id", type=_bay_id, help="default: from the file name, else G1-L-04")
     ap.add_argument("--source", default="camera", choices=["camera", "robot"])
     ap.add_argument("--start", type=_aware, help="ISO time of the first frame, with timezone")
     ap.add_argument("--every", type=float, default=60.0, help="video: seconds between frames")
+    ap.add_argument("--detector", choices=["classic", "yolo"], help="override the config backend")
+    ap.add_argument(
+        "--undistort-synth",
+        action="store_true",
+        help="undo tools/synth --distort (rectify.synth_k1 in configs/perception.yaml) first",
+    )
     args = ap.parse_args(argv)
+    k1 = load_yaml("perception")["rectify"]["synth_k1"] if args.undistort_synth else 0.0
     try:
-        n = run(args.input, args.out, args.bay_id, args.source, args.start, args.every)
-    except ValueError as e:
+        pipeline = load_pipeline(backend=args.detector)
+        n = run(
+            args.input, args.out, args.bay_id, args.source, args.start, args.every, k1, pipeline
+        )
+    except (ValueError, FileNotFoundError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
     print(f"wrote {n} readings to {args.out}")

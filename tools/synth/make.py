@@ -98,7 +98,7 @@ class Occluder:
     x0: float
     x1: float
     top_cm: float  # height of the head's top above the bay bottom
-    rows: tuple[int, ...]
+    spans: tuple[tuple[int, float, float], ...]  # (row, x0, x1): what the blob covers per row
 
 
 # --------------------------------------------------------------------------------------------
@@ -177,8 +177,25 @@ def make_occluder(geo: Geometry, rng: np.random.Generator) -> Occluder:
     w = float(rng.uniform(30, 50))
     x0 = round(float(rng.uniform(0, BAY_WIDTH_CM - w)), 1)
     top = float(rng.uniform(120, 180))
-    rows = tuple(r for r in ROWS if r * geo.pitch_cm < top)
-    return Occluder(x0, round(x0 + w, 1), top, rows)
+    return Occluder(x0, round(x0 + w, 1), top, _blob_spans(x0, round(x0 + w, 1), top, geo))
+
+
+def _blob_spans(x0: float, x1: float, top: float, geo: Geometry) -> tuple:
+    """Per row, the x range the blob (body + round head, as render draws it) covers."""
+    rad = (round(x1 * PX_PER_CM) - round(x0 * PX_PER_CM)) // 3 / PX_PER_CM
+    cx, cy = (x0 + x1) / 2, top - rad  # head centre (height above the bay bottom)
+    body_top = top - 2 * rad
+    spans = []
+    for r in ROWS:
+        lo, hi = r * geo.pitch_cm, (r + 1) * geo.pitch_cm
+        if lo < body_top:
+            spans.append((r, x0, x1))
+        elif lo < top:
+            dy = 0.0 if lo <= cy <= hi else min(abs(cy - lo), abs(cy - hi))
+            half = math.sqrt(max(rad * rad - dy * dy, 0.0))
+            if half > 0:
+                spans.append((r, round(max(cx - half, 0.0), 1), round(min(cx + half, 120.0), 1)))
+    return tuple(spans)
 
 
 # --------------------------------------------------------------------------------------------
@@ -214,7 +231,7 @@ def truth_reading(
 ) -> BayReading:
     rows = []
     for r in ROWS:
-        hidden = [(occ.x0, occ.x1)] if occ and r in occ.rows else []
+        hidden = [(a, b) for row, a, b in occ.spans if row == r] if occ else []
         # A pack more than half hidden can't be seen, so it isn't in the truth.
         in_row = sorted((p for p in packs if p.row == r), key=lambda p: p.x)
         seen = [

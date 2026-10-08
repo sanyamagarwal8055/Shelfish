@@ -1,0 +1,40 @@
+# Vision track settings (owned by Vision). Every tunable perception number lives here.
+
+# Fixed shelf cameras, mounted on the opposite side of the aisle (README 5.1, camera_planner).
+camera_plan:
+  hfov_deg: 90 # horizontal field of view
+  sensor_px: 4000 # horizontal pixels
+  min_px_per_cm: 10 # bay images must keep at least 10 px/cm
+  max_angle_deg: 35 # max viewing angle off the shelf normal
+  overlap_m: 0.2 # shared strip between neighbouring cameras
+
+# Lens model for synthetic --distort frames (tools/synth barrel). Real cameras get K + dist from
+# calibration instead.
+rectify:
+  synth_k1: 0.12
+
+# Shelf rows from rail detection.
+shelves:
+  rail_cm: 3.0 # rail height; row pitch comes from configs/store_layout.yaml
+  rail_band_cm: [1.5, 4.5] # a horizontal band this tall with full-width edges is a rail
+  edge_thr: 40 # Sobel |dI/dy| for a strong horizontal edge
+  min_cover: 0.4 # fraction of the width a rail edge must span
+  occlusion_tol: 45 # colour distance from the rail's own colour that means "something in front"
+  min_occlusion_cm: 5
+
+detector:
+  backend: classic # classic (OpenCV baseline, synthetic only) | yolo (real photos)
+  weights: data/models/sku110k_yolo.pt # git-ignored; train with training/train_sku110k.py
+  conf: 0.25
+  imgsz: 1280
+  row_tolerance_cm: 8 # a box's bottom must be this close to a shelf surface
+  classic:
+    bg_tol: 40
+    band_cm: [1.0, 4.0]
+    min_pack_cm: 2.0
+    edge_thr: 40
+    edge_cover: 0.8
+    conf: 0.5
+
+quality:
+  sharp_ref_var: 100 # Laplacian variance of a sharp bay image

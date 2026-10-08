@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from shelfpulse.contracts import ROWS, parse_bay_reading
 from shelfpulse.perception.analyze import analyze
 from shelfpulse.perception.run import main
+from tools.synth.make import make
 
 IST = timezone(timedelta(hours=5, minutes=30))
 T = datetime(2026, 10, 8, 11, 20, tzinfo=IST)
@@ -37,18 +38,20 @@ def _lines(path):
 
 
 @pytest.mark.parametrize("source", ["camera", "robot"])
-def test_analyze_is_valid(source):
-    r = analyze(_bay_image(), bay_id="G1-L-04", source=source, t=T, frame_ref="x.jpg")
+def test_analyze_is_valid(source, tmp_path):
+    make(tmp_path, n=1, seed=1)
+    img = cv2.imread(str(tmp_path / "images" / "0000_G1-L-04.jpg"))
+    r = analyze(img, bay_id="G1-L-04", source=source, t=T, frame_ref="x.jpg")
     parse_bay_reading(r.model_dump(mode="json"))
     assert r.px_per_cm == 10.0
     assert [row.row for row in r.rows] == list(ROWS)
     assert all(row.labels == [] for row in r.rows)
 
 
-def test_stub_is_untrusted():
-    # Quality 0 means the Brain treats the bay as unseen, so stub output can't raise alerts.
+def test_image_without_shelves_is_untrusted():
+    # No rails found: no rows and quality 0, so the Brain treats the bay as unseen.
     r = analyze(_bay_image(), bay_id="G1-L-04", source="camera", t=T)
-    assert r.quality < 0.5
+    assert r.rows == [] and r.quality < 0.5
 
 
 def test_analyze_rejects_bad_bay_id():
