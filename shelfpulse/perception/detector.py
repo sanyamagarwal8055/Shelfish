@@ -2,7 +2,9 @@
 
 Backends:
 - "yolo": an Ultralytics YOLO model (weights path from configs/perception.yaml), e.g. trained on
-  SKU-110K with training/train_sku110k.py. Use this for real photos.
+  SKU-110K with training/train_sku110k.py. Use this for real photos. With per_row, it runs on
+  each shelf row's strip instead of the whole bay, so small packs keep enough pixels (a whole bay
+  squeezed to 640 px makes a 6 cm soap ~18 px tall).
 - "classic": OpenCV only. Packs are whatever differs from the shelf's back panel just above each
   shelf surface, split into facings at strong vertical edges. A baseline that works on synthetic
   shelves with no model; it is not meant for real photos.
@@ -111,14 +113,18 @@ class Detector:
         backend: str = "classic",
         weights: str | Path | None = None,
         conf: float = 0.25,
-        imgsz: int = 1280,
+        imgsz: int = 640,
         classic: ClassicSettings = DEFAULT_CLASSIC,
+        per_row: bool = True,
+        row_margin_cm: float = 2.0,
     ):
         if backend not in BACKENDS:
             raise ValueError(f"detector backend must be one of {BACKENDS}, got {backend!r}")
         self.backend = backend
         self.conf = conf
         self.imgsz = imgsz
+        self.per_row = per_row
+        self.row_margin_cm = row_margin_cm
         self.classic = classic
         self._model = None
         if backend == "yolo":
@@ -135,7 +141,20 @@ class Detector:
     def detect(self, img: np.ndarray, shelves: list[Shelf], px_per_cm: float) -> list[Box]:
         if self.backend == "classic":
             return classic_detect(img, shelves, px_per_cm, self.classic)
+        if not (self.per_row and shelves):
+            return self._yolo(img, 0)
+        m = round(self.row_margin_cm * px_per_cm)
+        boxes = []
+        for s in shelves:
+            y0, y1 = max(s.top - m, 0), min(s.surface + m, img.shape[0])
+            boxes += self._yolo(img[y0:y1], y0)
+        return boxes
+
+    def _yolo(self, img: np.ndarray, y_off: int) -> list[Box]:
         res = self._model.predict(img, conf=self.conf, imgsz=self.imgsz, verbose=False)[0]
         xyxy = res.boxes.xyxy.cpu().numpy()
         confs = res.boxes.conf.cpu().numpy()
-        return [Box(*map(float, b), float(c)) for b, c in zip(xyxy, confs, strict=True)]
+        return [
+            Box(float(b[0]), float(b[1]) + y_off, float(b[2]), float(b[3]) + y_off, float(c))
+            for b, c in zip(xyxy, confs, strict=True)
+        ]

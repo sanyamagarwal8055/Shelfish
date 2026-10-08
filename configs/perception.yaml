@@ -28,8 +28,10 @@ detector:
   backend: classic # classic (OpenCV baseline, synthetic only) | yolo (real photos)
   weights: data/models/sku110k_yolo.pt # git-ignored; train with training/train_sku110k.py
   conf: 0.25
-  imgsz: 1280
+  imgsz: 640 # the size the SKU-110K model was trained at (1280 measured much worse)
   row_tolerance_cm: 8 # a box's bottom must be this close to a shelf surface
+  per_row: false # yolo per shelf-row strip: measured worse (3.51 vs 1.72 facing err) - the model knows small packs
+  row_margin_cm: 2 # strip margin above/below the row
   classic:
     bg_tol: 40
     band_cm: [1.0, 4.0]

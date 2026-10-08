@@ -80,7 +80,15 @@ def load_pipeline(
         edge_cover=c["edge_cover"],
         conf=c["conf"],
     )
-    detector = Detector(backend or d["backend"], d["weights"], d["conf"], d["imgsz"], classic)
+    detector = Detector(
+        backend or d["backend"],
+        d["weights"],
+        d["conf"],
+        d["imgsz"],
+        classic,
+        per_row=d["per_row"],
+        row_margin_cm=d["row_margin_cm"],
+    )
     identifier = load_identifier(name) if identify else None
     dc = cfg["depth"]
     depth = depth_mod.DepthSettings(
