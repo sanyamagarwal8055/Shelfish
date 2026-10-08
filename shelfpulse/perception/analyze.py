@@ -81,7 +81,7 @@ def load_pipeline(
         conf=c["conf"],
     )
     detector = Detector(
-        backend or d["backend"],
+        _backend(backend or d["backend"], d["weights"]),
         d["weights"],
         d["conf"],
         d["imgsz"],
@@ -106,6 +106,20 @@ def load_pipeline(
         depth,
         load_sku_master(),
     )
+
+
+def _backend(backend: str, weights: str) -> str:
+    """'auto': YOLO when its weights file exists, else the classic baseline (with a note)."""
+    if backend != "auto":
+        return backend
+    path = Path(weights) if Path(weights).is_absolute() else REPO_ROOT / weights
+    if path.is_file():
+        return "yolo"
+    print(
+        f"note: no YOLO weights at {path}; using the classic detector (synthetic shelves only)",
+        file=sys.stderr,
+    )
+    return "classic"
 
 
 def load_identifier(name: str = "perception") -> Identifier | None:

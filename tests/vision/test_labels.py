@@ -45,7 +45,12 @@ def test_robot_readings_carry_the_labels(tmp_path):
         {"contract_version": "1.0", "mission_id": "M-0003", "kind": "mission", "bays": bays,
          "created_at": "2026-10-08T11:00:00+05:30", "speed_mps": 0.3}
     )  # fmt: skip
-    b = bridge.run([m], tmp_path / "out", tmp_path / "rec", pipeline=load_pipeline(identify=False))
+    b = bridge.run(
+        [m],
+        tmp_path / "out",
+        tmp_path / "rec",
+        pipeline=load_pipeline(backend="classic", identify=False),
+    )
     assert len(b.readings) == 3
     pred = load(tmp_path / "out" / "bay_readings.jsonl")
     o = evaluate(pred, load(tmp_path / "rec" / "truth.jsonl"), by_bay=True).overall

@@ -67,7 +67,7 @@ def test_pack_depth_needs_a_known_sku():
 def test_truth_boxes_read_exact_depth(shelves_with_depth, noise_mm):
     out, truths = shelves_with_depth
     rng = np.random.default_rng(1)
-    p = load_pipeline(identify=False)
+    p = load_pipeline(backend="classic", identify=False)
     n = exact = 0
     for t in truths:
         img = cv2.imread(str(out / t.frame_ref))
@@ -92,7 +92,9 @@ def test_truth_boxes_read_exact_depth(shelves_with_depth, noise_mm):
 
 def test_cli_with_depth_dir_end_to_end(shelves_with_depth, tmp_path):
     out, _ = shelves_with_depth
-    pipeline = dataclasses.replace(load_pipeline(identify=False), identifier=PlannedNames())
+    pipeline = dataclasses.replace(
+        load_pipeline(backend="classic", identify=False), identifier=PlannedNames()
+    )
     pred = tmp_path / "pred.jsonl"
     run(out / "images", pred, None, "camera", pipeline=pipeline, depth_dir=out / "depth")
     o = evaluate(load(pred), load(out / "truth.jsonl")).overall
@@ -102,7 +104,9 @@ def test_cli_with_depth_dir_end_to_end(shelves_with_depth, tmp_path):
 def test_no_depth_map_means_null_and_misaligned_map_fails(shelves_with_depth):
     out, truths = shelves_with_depth
     img = cv2.imread(str(out / truths[0].frame_ref))
-    pipeline = dataclasses.replace(load_pipeline(identify=False), identifier=PlannedNames())
+    pipeline = dataclasses.replace(
+        load_pipeline(backend="classic", identify=False), identifier=PlannedNames()
+    )
     r = analyze(img, truths[0].bay_id, "camera", T, pipeline=pipeline)
     assert all(p.depth_left is None for row in r.rows for p in row.packs)
     with pytest.raises(ValueError, match="aligned"):

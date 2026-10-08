@@ -25,7 +25,7 @@ shelves:
   depth_cover: 0.05 # share of a column's row pixels in front of the edge that marks it occluded
 
 detector:
-  backend: classic # classic (OpenCV baseline, synthetic only) | yolo (real photos)
+  backend: auto # auto = yolo if the weights file exists, else classic | yolo | classic
   weights: data/models/sku110k_yolo.pt # git-ignored; train with training/train_sku110k.py
   conf: 0.25
   imgsz: 640 # the size the SKU-110K model was trained at (1280 measured much worse)

@@ -118,7 +118,7 @@ class Detector:
         per_row: bool = True,
         row_margin_cm: float = 2.0,
     ):
-        if backend not in BACKENDS:
+        if backend not in BACKENDS:  # "auto" is resolved by analyze.load_pipeline
             raise ValueError(f"detector backend must be one of {BACKENDS}, got {backend!r}")
         self.backend = backend
         self.conf = conf

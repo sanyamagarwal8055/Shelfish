@@ -58,7 +58,9 @@ def recorded(tmp_path_factory):
     rec = tmp_path_factory.mktemp("rec")
     record(rec, BAYS, seed=3, gaps=True, people={"G1-L-05"})
     out = tmp_path_factory.mktemp("out")
-    pipeline = dataclasses.replace(load_pipeline(identify=False), identifier=PlannedNames())
+    pipeline = dataclasses.replace(
+        load_pipeline(backend="classic", identify=False), identifier=PlannedNames()
+    )
     b = bridge.run([_mission(BAYS)], out, rec, pipeline=pipeline)
     return rec, out, b
 
@@ -112,7 +114,9 @@ def test_robot_readings_match_truth(recorded):
 
 
 def test_mission_without_recording_renders_bays(tmp_path):
-    pipeline = dataclasses.replace(load_pipeline(identify=False), identifier=PlannedNames())
+    pipeline = dataclasses.replace(
+        load_pipeline(backend="classic", identify=False), identifier=PlannedNames()
+    )
     missions = [parse_mission(json.loads(s)) for s in FIXTURE.read_text().splitlines()]
     b = bridge.run(missions, tmp_path, None, people={"G7-R-02"}, pipeline=pipeline)
     final = b.statuses[-1]

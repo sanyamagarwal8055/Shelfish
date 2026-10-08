@@ -37,14 +37,15 @@ def no_gallery():
 
 @pytest.fixture(autouse=True)
 def no_identifier(monkeypatch):
-    """Detection tests don't load DINOv2, even if a gallery index was built locally."""
+    """Detection tests use the classic detector and no DINOv2, whatever is installed locally."""
     import shelfpulse.perception.analyze as analyze
     import shelfpulse.perception.run as run
 
     plain = analyze.load_pipeline
 
     def load_pipeline(name="perception", backend=None, identify=False):
-        return plain(name, backend, identify)
+        # Detection tests are tuned for the classic detector on plain packs.
+        return plain(name, backend or "classic", identify)
 
     cached = {}
     monkeypatch.setattr(analyze, "load_pipeline", load_pipeline)
