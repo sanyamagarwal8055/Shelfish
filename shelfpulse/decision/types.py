@@ -63,6 +63,7 @@ class Event(_Model):
     sku: SkuRef | None = None
     t: AwareDatetime
     since: AwareDatetime | None = None  # when the condition started
+    previous: EventKind | None = None  # alert kind before this event (LOW -> OUT, OUT -> RESOLVED)
     source: Literal["camera", "robot", "estimate"]
 
 
