@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # run as a script from any folder
 
-from train_sku110k import REPO, use_data_raw  # noqa: E402
+from train_sku110k import REPO, sku110k_data  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -27,11 +27,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--device", default=None, help="GPU index or 'cpu' (default: auto)")
     args = ap.parse_args(argv)
 
-    use_data_raw()
     from ultralytics import YOLO
 
     m = YOLO(str(args.weights)).val(
-        data="SKU-110K.yaml",
+        data=sku110k_data(),
         split="test",
         imgsz=args.imgsz,
         batch=args.batch,
