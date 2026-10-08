@@ -1,0 +1,20 @@
+# Per-person role file
+CLAUDE.local.md
+
+# Outputs, raw data, environments
+runs/
+data/raw/
+data/samples/
+.venv/
+
+# Weights, videos, databases
+*.pt
+*.onnx
+*.mp4
+*.db
+
+# Python / tool caches
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/

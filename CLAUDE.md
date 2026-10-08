@@ -7,11 +7,11 @@ Two people build this in parallel, each with their own Claude Code. Your role (V
 
 | Track | Owns (may edit) | Must not edit |
 |---|---|---|
-| Vision (Person A) | `shelfpulse/sources/`, `shelfpulse/perception/`, `shelfpulse/layout/camera_planner.py`, `scripts/plan_cameras.py`, `scripts/build_gallery_index.py`, `tools/`, `training/`, `tests/vision/` | Brain folders |
-| Brain (Person B) | `shelfpulse/planogram/`, `shelfpulse/state/`, `shelfpulse/decision/`, `shelfpulse/robot_planner/`, `shelfpulse/storage/`, `shelfpulse/api/`, `shelfpulse/brain.py`, `apps/`, `sim/`, `tests/brain/` | Vision folders |
-| Shared (contract PR only) | `shelfpulse/contracts.py`, `docs/CONTRACT.md`, `contracts/fixtures/demo_store/`, `configs/store_layout.yaml`, `data/sku_master.csv`, `shelfpulse/layout/store_map.py`, `tests/contract/` | — |
+| Vision (Person A) | `shelfpulse/sources/`, `shelfpulse/perception/`, `shelfpulse/layout/camera_planner.py`, `scripts/plan_cameras.py`, `scripts/build_gallery_index.py`, `configs/perception.yaml`, `configs/cameras.yaml`, `tools/`, `training/`, `tests/vision/` | Brain folders |
+| Brain (Person B) | `shelfpulse/planogram/`, `shelfpulse/state/`, `shelfpulse/decision/`, `shelfpulse/robot_planner/`, `shelfpulse/storage/`, `shelfpulse/api/`, `shelfpulse/brain.py`, `configs/brain.yaml` (tracker k/n/clear_after, priority weights, simulator settings), `apps/`, `sim/`, `tests/brain/` | Vision folders |
+| Shared (contract PR only) | `shelfpulse/contracts.py`, `docs/CONTRACT.md`, `contracts/fixtures/demo_store/`, `configs/store_layout.yaml`, `data/sku_master.csv`, `shelfpulse/layout/store_map.py`, `shelfpulse/bus.py`, `shelfpulse/config.py`, `configs/robot.yaml`, `tests/contract/` | — |
 
-The two tracks meet only through the contract below. Never import the other track's internals; import only `shelfpulse.contracts` and `shelfpulse.layout.store_map`.
+The two tracks meet only through the contract below. Never import the other track's internals; import only the shared modules: `shelfpulse.contracts`, `shelfpulse.layout.store_map`, `shelfpulse.bus` and `shelfpulse.config`.
 
 @docs/CONTRACT.md
 

@@ -1,0 +1,17 @@
+# Robot settings (shared; locked design numbers, change only with the team).
+# Loaded by shelfpulse.config.load_robot_config().
+
+sweeps: ["07:00", "15:00"] # full-store sweeps, fixed route
+speed_sweep_mps: 0.4
+speed_mission_mps: 0.3
+
+missions:
+  max_bays: 8 # bays per mission
+  max_per_hour: 2
+  blackout: ["18:00-21:00"] # no missions in peak hours
+
+people:
+  max_person_cover: 0.30 # reject a bay frame if a person covers more than this fraction
+
+triggers:
+  camera_blocked_min: 15 # camera bay blocked this long -> mission

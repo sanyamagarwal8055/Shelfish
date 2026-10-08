@@ -1,0 +1,6 @@
+# Light dependencies only. Ask the team before adding anything heavy.
+pydantic>=2.6
+pyyaml>=6.0
+numpy>=1.26
+pytest>=8.0
+ruff>=0.5

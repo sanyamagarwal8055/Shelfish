@@ -1,0 +1,23 @@
+sku_id,name,category,width_cm,height_cm,depth_cm,margin_inr,pack_keywords,home_bay
+RICE_1KG,Basmati Rice 1 kg,staples,9.5,26.0,6.0,14.0,rice;basmati;1kg,G1-L-04
+RICE_5KG,Basmati Rice 5 kg,staples,30.0,40.0,10.0,55.0,rice;basmati;5kg,G1-L-03
+DAL_1KG,Toor Dal 1 kg,staples,9.0,25.0,6.0,16.0,toor;dal;1kg,G1-L-04
+DAL_500G,Toor Dal 500 g,staples,9.0,20.0,5.0,9.0,toor;dal;500g,G1-L-04
+ATTA_5KG,Whole Wheat Atta 5 kg,staples,32.0,42.0,10.0,24.0,atta;wheat;5kg,G1-L-05
+SUGAR_1KG,Sugar 1 kg,staples,10.0,22.0,6.0,5.0,sugar;1kg,G1-L-05
+SALT_1KG,Iodised Salt 1 kg,staples,10.0,20.0,6.0,3.0,salt;iodised;1kg,G1-L-05
+OIL_1L,Sunflower Oil 1 L,staples,9.0,28.0,6.0,18.0,sunflower;oil;1l,G1-R-02
+TEA_250G,Tea 250 g,staples,8.0,14.0,5.0,22.0,tea;250g,G2-L-01
+COFFEE_100G,Instant Coffee 100 g,staples,8.0,12.0,8.0,35.0,coffee;instant;100g,G2-L-01
+CHIPS_52G,Potato Chips 52 g,snacks,15.0,22.0,5.0,4.0,chips;potato;52g,G3-L-05
+BISCUIT_200G,Cream Biscuits 200 g,snacks,6.0,18.0,5.0,6.0,biscuit;cream;200g,G3-L-05
+NAMKEEN_200G,Bhujia Namkeen 200 g,snacks,14.0,24.0,4.0,9.0,namkeen;bhujia;200g,G3-L-05
+COLA_750ML,Cola 750 ml,beverages,8.0,30.0,8.0,7.0,cola;750ml,G4-R-03
+JUICE_1L,Mixed Fruit Juice 1 L,beverages,9.5,24.0,6.0,12.0,juice;fruit;1l,G4-R-03
+WATER_1L,Packaged Water 1 L,beverages,8.0,29.0,8.0,4.0,water;1l,G4-R-04
+CORNFLAKES_475G,Corn Flakes 475 g,breakfast,19.0,28.0,7.0,25.0,corn;flakes;475g,G5-L-02
+OATS_1KG,Rolled Oats 1 kg,breakfast,14.0,24.0,9.0,30.0,oats;rolled;1kg,G5-L-02
+DETERGENT_1KG,Detergent Powder 1 kg,household,18.0,26.0,7.0,20.0,detergent;powder;1kg,G6-R-06
+SHAMPOO_180ML,Shampoo 180 ml,personal_care,6.0,18.0,4.0,28.0,shampoo;180ml,G7-R-02
+SOAP_100G,Bath Soap 100 g,personal_care,9.0,6.0,4.0,8.0,soap;bath;100g,G7-R-02
+TOOTHPASTE_150G,Toothpaste 150 g,personal_care,19.0,5.0,4.0,15.0,toothpaste;150g,G7-R-02

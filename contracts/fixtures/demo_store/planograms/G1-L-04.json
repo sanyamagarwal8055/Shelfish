@@ -1,0 +1,12 @@
+{"bay_id": "G1-L-04", "source": "planogram", "updated": "2026-10-08T07:00:00+05:30",
+ "rows": [
+  [{"position": 0, "sku_id": "RICE_1KG", "x_start_cm": 0, "x_end_cm": 30, "facings": 3, "min_facings": 1},
+   {"position": 1, "sku_id": "RICE_5KG", "x_start_cm": 30, "x_end_cm": 120, "facings": 3, "min_facings": 1}],
+  [{"position": 0, "sku_id": "DAL_1KG", "x_start_cm": 0, "x_end_cm": 60, "facings": 6, "min_facings": 2},
+   {"position": 1, "sku_id": "DAL_500G", "x_start_cm": 60, "x_end_cm": 120, "facings": 6, "min_facings": 2}],
+  [{"position": 0, "sku_id": "RICE_1KG", "x_start_cm": 0, "x_end_cm": 120, "facings": 12, "min_facings": 3}],
+  [{"position": 0, "sku_id": "RICE_1KG", "x_start_cm": 0, "x_end_cm": 60, "facings": 6, "min_facings": 2},
+   {"position": 1, "sku_id": "DAL_1KG", "x_start_cm": 60, "x_end_cm": 120, "facings": 6, "min_facings": 2}],
+  [{"position": 0, "sku_id": "DAL_500G", "x_start_cm": 0, "x_end_cm": 120, "facings": 13, "min_facings": 3}],
+  [{"position": 0, "sku_id": "RICE_1KG", "x_start_cm": 0, "x_end_cm": 120, "facings": 12, "min_facings": 2}]
+ ]}

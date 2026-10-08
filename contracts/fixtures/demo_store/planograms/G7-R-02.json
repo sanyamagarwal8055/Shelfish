@@ -1,0 +1,10 @@
+{"bay_id": "G7-R-02", "source": "label_map", "updated": "2026-10-08T07:24:00+05:30",
+ "rows": [
+  [{"position": 0, "sku_id": "SOAP_100G", "x_start_cm": 0, "x_end_cm": 120, "facings": 13, "min_facings": 3}],
+  [{"position": 0, "sku_id": "SOAP_100G", "x_start_cm": 0, "x_end_cm": 120, "facings": 13, "min_facings": 3}],
+  [{"position": 0, "sku_id": "TOOTHPASTE_150G", "x_start_cm": 0, "x_end_cm": 120, "facings": 6, "min_facings": 2}],
+  [{"position": 0, "sku_id": "SHAMPOO_180ML", "x_start_cm": 0, "x_end_cm": 120, "facings": 20, "min_facings": 4}],
+  [{"position": 0, "sku_id": "SHAMPOO_180ML", "x_start_cm": 0, "x_end_cm": 60, "facings": 10, "min_facings": 2},
+   {"position": 1, "sku_id": "TOOTHPASTE_150G", "x_start_cm": 60, "x_end_cm": 120, "facings": 3, "min_facings": 1}],
+  [{"position": 0, "sku_id": "SHAMPOO_180ML", "x_start_cm": 0, "x_end_cm": 120, "facings": 20, "min_facings": 2}]
+ ]}

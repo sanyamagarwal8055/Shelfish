@@ -1,0 +1,18 @@
+[project]
+name = "shelfpulse"
+version = "0.0.1"
+description = "Shelf cameras + one robot: find empty, low and misplaced products, rank the fix, verify it."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --import-mode=importlib"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = [".venv", "runs", "data/raw"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

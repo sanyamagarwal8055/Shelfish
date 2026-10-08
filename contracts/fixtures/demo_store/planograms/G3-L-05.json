@@ -1,0 +1,10 @@
+{"bay_id": "G3-L-05", "source": "planogram", "updated": "2026-10-08T07:00:00+05:30",
+ "rows": [
+  [{"position": 0, "sku_id": "NAMKEEN_200G", "x_start_cm": 0, "x_end_cm": 120, "facings": 8, "min_facings": 2}],
+  [{"position": 0, "sku_id": "NAMKEEN_200G", "x_start_cm": 0, "x_end_cm": 120, "facings": 8, "min_facings": 2}],
+  [{"position": 0, "sku_id": "BISCUIT_200G", "x_start_cm": 0, "x_end_cm": 120, "facings": 20, "min_facings": 4}],
+  [{"position": 0, "sku_id": "BISCUIT_200G", "x_start_cm": 0, "x_end_cm": 60, "facings": 10, "min_facings": 2},
+   {"position": 1, "sku_id": "CHIPS_52G", "x_start_cm": 60, "x_end_cm": 120, "facings": 4, "min_facings": 1}],
+  [{"position": 0, "sku_id": "CHIPS_52G", "x_start_cm": 0, "x_end_cm": 120, "facings": 8, "min_facings": 2}],
+  [{"position": 0, "sku_id": "CHIPS_52G", "x_start_cm": 0, "x_end_cm": 120, "facings": 8, "min_facings": 2}]
+ ]}

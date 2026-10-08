@@ -1,0 +1,40 @@
+# Store layout (shared; change only via a contract PR). Matches docs/store_blueprint.png.
+#
+# 220 bay IDs = 200 aisle bays (10 runs x 2 faces x 10 bays) + 20 end caps (front + back per run).
+#
+# Coordinates in metres. Origin = front-left corner of the store (entry side, by checkout).
+# x grows east (towards the backroom), y grows towards the back wall (chillers).
+# A run's x_m/y_m is its south-west corner; it extends east by run_depth_m and north by length_m.
+# Face L faces west (aisle on the run's west side), face R faces east. Bay 01 is at the front.
+
+store: { width_m: 48, depth_m: 30, hours: "08:00-22:00" }
+
+bay: { width_m: 1.2, height_m: 2.1, depth_cm: 45, levels: 6 }
+bays_per_face: 10
+run_depth_m: 1.0 # two 45 cm shelves back to back + 10 cm spine
+end_cap: { width_m: 1.2, depth_m: 0.45 } # centred on the run, one at each end
+
+runs:
+  - { id: G1, x_m: 8.6, y_m: 10.0, length_m: 12, tier: camera, category: staples }
+  - { id: G2, x_m: 11.6, y_m: 10.0, length_m: 12, tier: camera, category: staples }
+  - { id: G3, x_m: 14.6, y_m: 10.0, length_m: 12, tier: camera, category: snacks }
+  - { id: G4, x_m: 17.6, y_m: 10.0, length_m: 12, tier: camera, category: beverages }
+  - { id: G5, x_m: 20.6, y_m: 10.0, length_m: 12, tier: camera, category: breakfast }
+  - { id: G6, x_m: 23.6, y_m: 10.0, length_m: 12, tier: robot_only, category: household }
+  - { id: G7, x_m: 26.6, y_m: 10.0, length_m: 12, tier: robot_only, category: personal_care }
+  - { id: G8, x_m: 29.6, y_m: 10.0, length_m: 12, tier: robot_only, category: baby }
+  - { id: G9, x_m: 32.6, y_m: 10.0, length_m: 12, tier: robot_only, category: home }
+  - { id: G10, x_m: 35.6, y_m: 10.0, length_m: 12, tier: robot_only, category: pet }
+
+# Aisle Ak runs north-south between G(k) and G(k+1); A0 is west of G1, A10 east of G10.
+aisles: { width_m: 2.0, ids: [A0, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10] }
+
+# East-west walkways joining the aisle ends (centre lines).
+cross_aisles:
+  front: { y_m: 8.5, width_m: 2.0 }
+  back: { y_m: 23.5, width_m: 2.0 }
+
+backroom:
+  door: [40.0, 8.5] # where the robot enters the sales floor (east end of the front walkway)
+  dock: [42.2, 4.8]
+  edge_server: [42.3, 1.9]
