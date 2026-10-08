@@ -2,6 +2,7 @@
 
     python -m tools.synth.make --n 50 --seed 1 --out runs/synth01/ [--gaps] [--misplace]
         [--occlude] [--distort] [--depth]
+    python -m tools.synth.make --sequence 60 --out runs/seq01/   (camera time-lapse, sequence.py)
 
 Each image is drawn at 10 px/cm (1200 x 2100 px, 6 rows, row 0 at the bottom) from a bay's
 planogram, using pack sizes from data/sku_master.csv. Packs are pasted from
@@ -548,7 +549,24 @@ def main(argv: list[str] | None = None) -> int:
         "--bays", help="comma-separated bay_ids (default: every planogram; others get a random one)"
     )
     ap.add_argument("--start", type=datetime.fromisoformat, help="ISO time of the first frame")
+    ap.add_argument(
+        "--sequence", type=int, metavar="N", help="camera time-lapse: N minutes (see sequence.py)"
+    )
+    ap.add_argument("--cameras", help="--sequence: comma-separated camera ids")
     args = ap.parse_args(argv)
+    if args.sequence:
+        from tools.synth.sequence import make_sequence
+
+        try:
+            cams = args.cameras.split(",") if args.cameras else None
+            truths = make_sequence(args.out, args.sequence, args.seed, cams, None, args.gallery,
+                                   args.start)  # fmt: skip
+        except (ValueError, KeyError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        print(f"wrote a {args.sequence}-minute camera sequence ({len(truths)} bay readings) "
+              f"to {args.out}")  # fmt: skip
+        return 0
     try:
         truths = make(
             args.out,

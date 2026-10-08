@@ -4,7 +4,8 @@
 
 Readings are paired by the file name in frame_ref, so a prediction made from
 runs/synth01/images/0003_G1-L-04.jpg matches the truth line for images/0003_G1-L-04.jpg;
---by-bay pairs by bay_id instead (one reading per bay, e.g. a robot pass vs its truth.jsonl).
+--by-bay pairs by bay_id instead (one reading per bay, e.g. a robot pass vs its truth.jsonl);
+--by-bay-time pairs by (bay_id, t) (a camera time-lapse vs its truth.jsonl).
 A gold reading with no prediction scores as an empty prediction.
 
 - facing-count error: mean |pred packs - gold packs| over every gold row.
@@ -163,8 +164,15 @@ def load(path: Path) -> list[BayReading]:
         return [parse_bay_reading(json.loads(s)) for s in f if s.strip()]
 
 
-def evaluate(pred: list[BayReading], gold: list[BayReading], by_bay: bool = False) -> Report:
-    key_of = (lambda r: r.bay_id) if by_bay else (lambda r: frame_key(r.frame_ref))
+def evaluate(
+    pred: list[BayReading], gold: list[BayReading], by_bay: bool = False, by_time: bool = False
+) -> Report:
+    if by_time:
+        key_of = lambda r: f"{r.bay_id}@{r.t.isoformat()}"  # noqa: E731
+    elif by_bay:
+        key_of = lambda r: r.bay_id  # noqa: E731
+    else:
+        key_of = lambda r: frame_key(r.frame_ref)  # noqa: E731
     by_frame = {key_of(r): r for r in pred}
     rep = Report()
     for g in gold:
@@ -220,8 +228,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--gold", type=Path, required=True)
     ap.add_argument("--summary", action="store_true", help="overall numbers only")
     ap.add_argument("--by-bay", action="store_true", help="pair readings by bay_id")
+    ap.add_argument("--by-bay-time", action="store_true", help="pair readings by bay_id and t")
     args = ap.parse_args(argv)
-    rep = evaluate(load(args.pred), load(args.gold), args.by_bay)
+    rep = evaluate(load(args.pred), load(args.gold), args.by_bay, args.by_bay_time)
     print(format_report(rep, per_bay=not args.summary))
     return 0
 

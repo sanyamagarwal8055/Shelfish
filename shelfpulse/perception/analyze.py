@@ -16,6 +16,7 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from shelfpulse.config import REPO_ROOT, load_yaml
@@ -201,6 +202,7 @@ def build_rows(
         best = min(shelves, key=lambda s: abs(b.y1 - s.surface), default=None)
         if best is not None and abs(b.y1 - best.surface) <= tol:
             per_row[best.row].append(b)
+    per_row = {r: dedupe(bs) for r, bs in per_row.items()}
 
     rows = []
     for s in shelves:
@@ -245,6 +247,64 @@ def build_rows(
     return rows
 
 
+DUPLICATE_OVERLAP = 0.6  # x-overlap (share of the narrower box) that makes two boxes one pack
+EMPTY_TEXTURE = 6.0  # grey-level std below which a box's centre is blank shelf, not a product
+EMPTY_COLOUR = 40.0  # max channel distance from the back panel's colour to count as blank
+EMPTY_DEPTH_CM = 3.0  # box centre this close to the shelf's back = nothing on the shelf there
+
+
+def dedupe(boxes: list[Box]) -> list[Box]:
+    """In one row, two boxes over the same x span are one pack seen twice: keep the surer one."""
+    kept: list[Box] = []
+    for b in sorted(boxes, key=lambda b: -b.conf):
+        w = b.x1 - b.x0
+        if all(_overlap(b.x0, b.x1, k.x0, k.x1) <= DUPLICATE_OVERLAP * min(w, k.x1 - k.x0)
+               for k in kept):  # fmt: skip
+            kept.append(b)
+    return kept
+
+
+def drop_empty(
+    boxes: list[Box],
+    img: np.ndarray,
+    shelves: list[Shelf],
+    depth: np.ndarray | None,
+    shelf_depth_cm: float,
+) -> list[Box]:
+    """Drop boxes over empty shelf (a detector can mistake a blank slot between rails for a
+    product): with depth, the box centre sits at the shelf's back; without, its centre is flat
+    and the colour of the shelf's back panel (a flat sliver of a coloured pack stays)."""
+    from shelfpulse.perception.detector import background_colour
+    from shelfpulse.perception.shelves import shelf_edge_depth
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    back = background_colour(img, shelves) if depth is None else None
+    out = []
+    for b in boxes:
+        x0, x1, y0, y1 = int(b.x0), int(b.x1), int(b.y0), int(b.y1)
+        w, h = x1 - x0, y1 - y0
+        if w < 4 or h < 4:
+            continue
+        cx = slice(x0 + w // 4, x1 - w // 4)
+        cy = slice(y0 + h // 4, y1 - h // 4)
+        if depth is not None and shelves:
+            shelf = min(shelves, key=lambda s: abs(b.y1 - s.surface))
+            edge = shelf_edge_depth(depth, shelf.rail)
+            face = depth[cy, cx]
+            vals = face[face > 0]
+            if edge is not None and vals.size:
+                if np.median(vals) >= edge + (shelf_depth_cm - EMPTY_DEPTH_CM) * 10:
+                    continue  # the back panel: empty
+                out.append(b)
+                continue
+        centre = img[cy, cx].reshape(-1, 3).astype(np.float32)
+        flat = float(gray[cy, cx].std()) < EMPTY_TEXTURE
+        if flat and back is not None and np.abs(centre.mean(0) - back).max() < EMPTY_COLOUR:
+            continue  # flat and the back panel's colour: empty shelf
+        out.append(b)
+    return out
+
+
 def analyze(
     bay_image: np.ndarray,
     bay_id: str,
@@ -268,6 +328,7 @@ def analyze(
     px_per_cm = bay_image.shape[1] / BAY_WIDTH_CM
     shelves = find_shelves(bay_image, px_per_cm, p.shelves, depth_map)
     boxes = p.detector.detect(bay_image, shelves, px_per_cm)
+    boxes = drop_empty(boxes, bay_image, shelves, depth_map, p.depth.shelf_depth_cm)
     namer = _namer(p.identifier, bay_image, boxes, bay_id) if p.identifier and boxes else None
     depther = _depther(depth_map, p) if depth_map is not None else None
     return BayReading(
