@@ -1,6 +1,6 @@
 sku_id,name,category,width_cm,height_cm,depth_cm,margin_inr,pack_keywords,home_bay
 RICE_1KG,Basmati Rice 1 kg,staples,9.5,26.0,6.0,14.0,rice;basmati;1kg,G1-L-04
-RICE_5KG,Basmati Rice 5 kg,staples,30.0,40.0,10.0,55.0,rice;basmati;5kg,G1-L-03
+RICE_5KG,Basmati Rice 5 kg,staples,30.0,40.0,10.0,55.0,rice;basmati;5kg,G1-L-04
 DAL_1KG,Toor Dal 1 kg,staples,9.0,25.0,6.0,16.0,toor;dal;1kg,G1-L-04
 DAL_500G,Toor Dal 500 g,staples,9.0,20.0,5.0,9.0,toor;dal;500g,G1-L-04
 ATTA_5KG,Whole Wheat Atta 5 kg,staples,32.0,42.0,10.0,24.0,atta;wheat;5kg,G1-L-05
