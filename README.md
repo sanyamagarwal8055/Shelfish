@@ -1,2 +1,517 @@
-# Shelfish
-Real-time shelf auditing for retail. Detects empty, low and misplaced products from shelf cameras or CCTV, matches them to the planogram, diagnoses the cause using POS and stock data, and sends staff camera-verified restock tasks ranked by lost sales. Runs on a store edge server. Built for E-Cell IITB × Everseen CV Hackathon 2026.
+# ShelfPulse
+
+**Shelf cameras and a robot that find empty shelves, explain why, and prove the fix.**
+PS1, Shelf Auditing and Real-Time Stockouts · E-Cell IIT Bombay × Everseen Computer Vision AI Hackathon 2026.
+
+ShelfPulse watches the top-selling shelves with **50 stereo depth cameras** (one frame per minute) and the rest of the store with **one leased robot** (two sweeps a day plus on-demand missions). Both feed one **edge server** that compares every shelf with its planogram, counts stock, works out *why* a slot is empty, ranks the fix in rupees lost per hour, sends a task to staff, and confirms the fix with the next image.
+
+> Status: Round 1 (proposal). This README is the build spec: the repo layout, what each file does, and its pseudocode. Files marked **[MVP]** are built first for the finale demo. **[DONE]** = already built and tested (step 1).
+
+---
+
+## Contents
+
+1. [The setup we design for](#1-the-setup-we-design-for)
+2. [Where cameras and the robot are used](#2-where-cameras-and-the-robot-are-used)
+3. [How the code is organised: 3 programs, 1 codebase](#3-how-the-code-is-organised-3-programs-1-codebase)
+4. [Repository layout](#4-repository-layout)
+5. [File-by-file guide with pseudocode](#5-file-by-file-guide-with-pseudocode)
+6. [Data formats](#6-data-formats)
+7. [Datasets](#7-datasets)
+8. [Running the demo](#8-running-the-demo)
+9. [Evaluation](#9-evaluation)
+10. [Scope and assumptions](#10-scope-and-assumptions)
+
+---
+
+## 1. The setup we design for
+
+| Item | Value |
+|---|---|
+| Store | Generic ~15,000 sq ft supermarket (48 m × 30 m), open 08:00-22:00 |
+| Shelving | 10 double-sided runs G1-G10, 12 m long; 11 aisles A0-A10, 2.0 m wide |
+| Bays | 200 ambient bays (1.2 m × 2.1 m, 6 levels, 45 cm deep) + 20 end caps; ~5,000 SKUs |
+| Shelf cameras | 50 stereo depth cameras (colour + depth), PoE, 5 per face on G1-G5, 1 frame/min |
+| Robot | 1 leased autonomous robot, two-sided mast (10 × 4K + 2 depth sensors), sweeps at 07:00 and 15:00 |
+| Compute | 1 edge GPU server + PoE switches + robot dock in the backroom |
+| Out of scope | Produce, loose items, chillers (phase 2), spring-loaded shelves, CCTV |
+
+The store blueprint, camera positions and robot route are in `docs/store_blueprint.png` (same image as slide 4 of the PPT).
+
+## 2. Where cameras and the robot are used
+
+| Job | Shelf cameras (G1-G5) | Robot (whole store) |
+|---|---|---|
+| How often | Every minute | 07:00 + 15:00 sweeps, plus missions |
+| Out of stock / low / misplaced | Yes, alert within ~3 min | Yes for G6-G10 and end caps, at sweep time |
+| Read shelf labels (live planogram) | No (text too small, ~10 px/cm) | Yes (~40 px/cm), every morning |
+| Depth (packs behind the front one) | Yes, stereo | Yes, time-of-flight; resets estimates |
+| When blocked | Hands the bay to the robot planner | Skips, retries, re-queues the bay |
+| Verify a restock | Next frame | Next sweep or mission |
+
+**Rule of thumb:** cameras give *freshness* where the money is; the robot gives *coverage, labels and depth* everywhere; the software sends the robot to whatever the cameras can't see.
+
+## 3. How the code is organised: 3 programs, 1 codebase
+
+There is **not** one program for the robot and another for the cameras. Both are thin **adapters** that turn their raw output into the same `BayImage`. One shared **brain** does everything after that.
+
+```
+ Shelf cameras ──► [1] camera service ──┐
+                                        ├──► BayImage ──► [3] brain: perception → shelf state → decision → staff app
+ Leased robot  ◄─► [2] robot bridge ────┘                          │
+        ▲                                                          │
+        └──────────── missions ◄──── robot planner ◄──────────────┘
+```
+
+| Program | Entry point | Runs on | Does |
+|---|---|---|---|
+| 1. Camera service | `python -m shelfpulse.sources.camera.service` | Edge server | Pulls a frame from each camera every minute, lens correction, camera → bay mapping |
+| 2. Robot bridge | `python -m shelfpulse.sources.robot.bridge` | Edge server | Sends sweep/mission waypoints to the vendor API, receives frames + pose, stitches one image per bay |
+| 3. Brain | `python -m shelfpulse.brain` | Edge server | Perception, shelf state (fusion), counting, diagnosis, priority, tasks, verification, robot planner, API |
+
+Not ours: the robot's navigation software (vendor), camera firmware (vendor). The three programs talk through a local message queue (Redis streams or a simple SQLite-backed queue for the demo).
+
+---
+
+## 4. Repository layout
+
+```
+shelfpulse/
+├── README.md
+├── requirements.txt
+├── Makefile
+├── configs/
+│   ├── default.yaml              # every tunable number [MVP]
+│   ├── store_layout.yaml         # runs, bays, aisles, dimensions [MVP]
+│   ├── cameras.yaml              # generated by plan_cameras.py: id, run, face, position, bays [MVP]
+│   └── robot.yaml                # sweep times, speeds, people rules, mission limits [MVP]
+├── data/
+│   ├── README.md                 # dataset sources and licences
+│   ├── planograms/               # optional digital planogram, one JSON per bay
+│   ├── gallery/                  # pack-shots: gallery/<sku_id>/*.jpg [MVP]
+│   ├── mock_store/               # sku_master.csv, pos.csv, inventory.csv [MVP]
+│   └── samples/
+│       ├── camera/               # fixed-view shelf video or images [MVP]
+│       └── robot/                # walk-along video + pose track (pose.csv) [MVP]
+├── scripts/
+│   ├── plan_cameras.py           # camera count + positions from the layout [MVP]
+│   ├── build_gallery_index.py    # pack-shots → FAISS index [MVP]
+│   ├── download_datasets.sh      # SKU-110K, RP2K, empty-shelf sets
+│   └── simulate_store.py         # runs all 3 programs on sample data [MVP]
+├── shelfpulse/
+│   ├── __init__.py
+│   ├── config.py                 # typed settings from YAML [MVP]
+│   ├── types.py                  # BayImage, Detection, SlotObservation, Event, Task [MVP]
+│   ├── bus.py                    # message queue between programs [MVP]
+│   ├── layout/
+│   │   ├── store_map.py          # runs, faces, bays, aisle graph [MVP]
+│   │   └── camera_planner.py     # the N = ceil((L-0.2)/(W-0.2)) logic [MVP]
+│   ├── sources/
+│   │   ├── camera/
+│   │   │   ├── service.py        # program 1 main loop [MVP]
+│   │   │   ├── poe_camera.py     # grab colour + depth from one camera [MVP]
+│   │   │   └── calibration.py    # lens model, camera → bay crop boxes, drift check [MVP]
+│   │   └── robot/
+│   │       ├── bridge.py         # program 2 main loop [MVP]
+│   │       ├── vendor_api.py     # wrapper around the robot vendor's API (+ fake for demo) [MVP]
+│   │       ├── stitcher.py       # frames + pose → one image per bay [MVP]
+│   │       └── people_guard.py   # reject frames with people over the shelf [MVP]
+│   ├── perception/
+│   │   ├── privacy.py            # blur people before anything is stored [MVP]
+│   │   ├── quality.py            # blur / glare / occlusion score [MVP]
+│   │   ├── rectify.py            # warp to a front-on bay in cm [MVP]
+│   │   ├── detector.py           # packs, gaps, rails, labels [MVP]
+│   │   ├── embedder.py           # crop → vector [MVP]
+│   │   ├── sku_index.py          # FAISS search over the gallery [MVP]
+│   │   ├── labels.py             # read shelf labels (OCR / barcode) on robot images
+│   │   ├── depth.py              # recess of each facing from stereo / ToF [MVP]
+│   │   └── identify.py           # combine embedding + location + size + text [MVP]
+│   ├── planogram/                # [DONE] schema, loader, matcher
+│   │   ├── schema.py
+│   │   ├── loader.py
+│   │   ├── matcher.py
+│   │   └── label_map.py          # build/refresh planogram from robot label reads
+│   ├── state/
+│   │   ├── slot_tracker.py       # [DONE] k-of-n state machine per slot
+│   │   ├── shelf_state.py        # fusion of camera + robot readings per slot [MVP]
+│   │   └── quantity.py           # facings × stack × depth, sales-based estimate [MVP]
+│   ├── decision/                 # [DONE] store_data, diagnosis, priority, tasks, verifier
+│   ├── robot_planner/
+│   │   ├── scheduler.py          # sweeps at 07:00 / 15:00, mission gating [MVP]
+│   │   ├── mission_queue.py      # which bays need a second look [MVP]
+│   │   └── route.py              # order bays into a short route on the aisle graph [MVP]
+│   ├── brain.py                  # program 3 main loop [MVP]
+│   ├── storage/db.py             # SQLite: frames, slots, events, tasks, metrics [MVP]
+│   └── api/server.py             # FastAPI for the dashboard and staff app [MVP]
+├── apps/
+│   ├── dashboard/app.py          # Streamlit: store map, availability, tasks [MVP]
+│   └── staff/                    # mobile web page: task list with Done / Not real [MVP]
+├── training/
+│   ├── train_detector.py
+│   ├── train_embedder.py
+│   ├── active_learning.py
+│   └── evaluate.py
+├── tests/                        # matcher, tracker, diagnosis, priority, planner, fusion, quantity, route
+└── docs/
+    ├── store_blueprint.png
+    └── architecture.md
+```
+
+---
+
+## 5. File-by-file guide with pseudocode
+
+Pseudocode is Python-flavoured and kept short.
+
+### 5.1 Shared foundations
+
+**`configs/default.yaml`** [MVP]
+```yaml
+camera:   { interval_s: 60, min_blur_var: 80, max_person_area: 0.25 }
+detector: { weights: models/detector.pt, conf: 0.35, imgsz: 1280 }
+identify: { top_k: 5, accept_sim: 0.78, margin: 0.05, w_location: 0.3, w_size: 0.2, w_text: 0.2 }
+matcher:  { match_bonus: 2.0, mismatch_penalty: 1.5, gap_penalty: 1.0, min_fill: 0.3 }
+tracker:  { k: 2, n: 3, clear_after: 2 }
+fusion:   { conflict_window_s: 300 }
+priority: { promo_boost: 1.5, kvi_boost: 1.3 }
+privacy:  { keep_raw_frames_h: 24 }
+```
+
+**`configs/robot.yaml`** [MVP]
+```yaml
+sweeps: ["07:00", "15:00"]
+speed_sweep_mps: 0.4
+speed_mission_mps: 0.3
+frame_every_m: 0.30
+people: { slow_within_m: 2.0, stop_at_m: 0.5, wait_s: 20, max_person_cover: 0.30 }
+missions: { max_per_hour: 2, max_bays: 8, blackout: ["18:00-21:00"], footfall_tx_per_10min_max: 25 }
+triggers: { camera_blocked_min: 15 }
+```
+
+**`shelfpulse/types.py`** [MVP]: the objects passed between programs.
+```
+BayImage:        bay_id, source("camera"|"robot"), t, rgb (front-on, cm-scaled), depth|None, quality, px_per_cm
+Detection:       box, cls("pack"|"gap"|"rail"|"label"), score
+SlotObservation: slot_key, sku_seen, facings, stack, depth_left, status, confidence, source, t
+Event:           kind(OUT|LOW|MISPLACED|UNKNOWN_ITEM|RESOLVED), slot, since, previous
+Task:            id, action, sku, bay, qty, cause, rupees_per_h, status, assignee, created_at, closed_at
+```
+
+**`shelfpulse/bus.py`** [MVP]: publish/subscribe between the three programs.
+```
+publish(topic, obj): redis.xadd(topic, serialize(obj))         # or sqlite queue in demo mode
+subscribe(topic):   for msg in redis.xread(topic, block=...): yield deserialize(msg)
+topics: "bay_images", "missions", "robot_status"
+```
+
+**`layout/store_map.py`** [MVP]: the store as data.
+```
+load(store_layout.yaml) -> StoreMap
+StoreMap.runs: G1..G10 (x, y, length, faces L/R)
+StoreMap.bays: bay_id -> run, face, index, x_range_m, shelf_heights
+StoreMap.aisle_graph: nodes = aisle ends + bay fronts; edges = walkable segments with lengths
+StoreMap.tier(run) -> "camera" | "robot_only"
+```
+
+**`layout/camera_planner.py`** + **`scripts/plan_cameras.py`** [MVP]: camera count from geometry, any store.
+```
+useful_width(d, hfov=90°, px=4000, min_px_per_cm=10, max_angle=35°):
+    return min(2*d*tan(hfov/2), 2*d*tan(max_angle), px / min_px_per_cm / 100)
+plan(store_map, runs):
+    for run in runs: for face in run.faces:
+        d = aisle_width_facing(face); W = useful_width(d); L = run.length
+        N = ceil((L - 0.2) / (W - 0.2))
+        for i in 1..N: x = (i - 0.5) * L / N
+            mount = opposite_surface(face)                       # neighbouring run or a pole bracket
+            if vertical_cover(d) < shelf_height: add 2 stacked cameras else 1
+            cameras.append(id, face, x, mount, bays_covered(face, x, W))
+    write configs/cameras.yaml; print total            # our store: 10 faces × 5 = 50
+```
+
+### 5.2 Program 1: camera service (`sources/camera/`)
+
+**`service.py`** [MVP]
+```
+cams = load(cameras.yaml); calib = Calibration.load()
+every interval_s:
+    for cam in cams (in parallel):
+        rgb, depth = poe_camera.grab(cam)
+        if not calib.view_ok(cam, rgb): raise_maintenance_task(cam); continue   # knocked camera
+        rgb, depth = calib.undistort(cam, rgb, depth)
+        for bay in cam.bays:
+            img, d = calib.crop_to_bay(cam, bay, rgb, depth)   # already rectified per bay at install
+            bus.publish("bay_images", BayImage(bay, "camera", now, img, d, quality(img)))
+```
+
+**`poe_camera.py`** [MVP]: `grab(cam)` pulls one colour frame + depth map (vendor SDK / RTSP + depth stream). Demo: reads the next frame of `data/samples/camera/*.mp4`.
+
+**`calibration.py`** [MVP]
+```
+at install: lens model per camera; homography per bay from shelf rails + known bay size (1.2 m × 2.1 m)
+view_ok(cam, rgb): rails_found and reprojection_error(rails, stored) < tolerance
+crop_to_bay(cam, bay, rgb, depth): warpPerspective(rgb, H[cam][bay]) → front-on image at 10 px/cm
+```
+
+### 5.3 Program 2: robot bridge (`sources/robot/`)
+
+**`bridge.py`** [MVP]
+```
+api = VendorAPI(robot.yaml)
+loop:
+    for mission in bus.subscribe("missions"): api.send_waypoints(mission.waypoints, speed=mission.speed)
+    for frame, pose in api.frames():                          # frame every 0.30 m of travel
+        if people_guard.reject(frame): stitcher.mark_reshoot(pose); continue
+        stitcher.add(frame, pose)
+        for bay in stitcher.completed_bays():                  # all frames for a bay received
+            img, depth = stitcher.render(bay)                  # one front-on image + ToF depth
+            bus.publish("bay_images", BayImage(bay, "robot", now, img, depth, quality(img)))
+    on api.event("blocked", segment): stitcher.mark_pending(segment)   # retried at end / next mission
+```
+
+**`vendor_api.py`** [MVP]: `send_waypoints`, `frames()` (yields image + pose), `status()`, `dock()`. `FakeVendorAPI` replays `data/samples/robot/walk.mp4` with `pose.csv`.
+
+**`stitcher.py`** [MVP]
+```
+add(frame, pose): bay = store_map.bay_at(pose.x, pose.y, camera_side); buffer[bay].append(frame, pose)
+render(bay):
+    strips = [project(frame, pose, mast_camera_height) for frame in buffer[bay]]   # known pose → no feature matching needed
+    mosaic = blend(strips) at 10 px/cm (downsampled from ~40 px/cm; full res kept for label reading)
+    depth = merge ToF readings onto the same grid
+```
+
+**`people_guard.py`** [MVP]: `reject(frame) = person_cover(frame) > max_person_cover`.
+
+### 5.4 Program 3: the brain
+
+**`brain.py`** [MVP]: the main loop.
+```
+for bay_img in bus.subscribe("bay_images"):
+    bay_img = privacy.blur_people(bay_img)
+    if bay_img.quality < q_min: mission_queue.add(bay_img.bay, reason="blocked"); continue
+    dets = detector.detect(bay_img.rgb)
+    packs = identify.run(dets.packs, bay_img, label_map[bay])
+    if bay_img.source == "robot": label_map.update(bay, labels.read(bay_img, dets.labels))
+    obs = matcher.match(planogram_or_label_map(bay), packs, dets.gaps)        # [DONE]
+    for o in obs: o.depth_left = depth.recess(bay_img.depth, o); o.units = quantity.estimate(o)
+    changes = shelf_state.update(obs, source=bay_img.source, t=bay_img.t)     # fusion
+    events = slot_tracker.update(bay, changes, t)                              # [DONE]
+    for ev in events:
+        if ev.kind == "RESOLVED": verifier.close(ev); continue                 # [DONE]
+        diag = diagnosis.diagnose(ev, store_data.snapshot(ev.sku))              # [DONE]
+        tasks.upsert(ev, diag, priority.score(ev, diag))                        # [DONE]
+    mission_queue.update_from(shelf_state)          # unsure / blocked / verify-off-camera bays
+scheduler.tick()                                     # sends sweeps and missions via bus "missions"
+```
+
+#### Perception (`perception/`)
+
+**`privacy.py`** [MVP]: detect people, Gaussian-blur them, before storage. Raw frames deleted after 24 h.
+
+**`quality.py`** [MVP]: `score = min(blur_ok, glare_ok, 1 - person_cover)`.
+
+**`rectify.py`** [MVP]: shared helpers (homography from rails, cm scaling) used by calibration and stitcher.
+
+**`detector.py`** [MVP]
+```
+model = YOLO(weights)    # classes: pack, gap, rail, label; trained on SKU-110K + empty-shelf sets + store frames
+detect(img) -> Detections grouped by class
+```
+
+**`embedder.py`** + **`sku_index.py`** [MVP]
+```
+embed(crop) = l2norm(head(dinov2(resize(crop, 224))))
+search(v, k=5) -> [(sku, sim)]       # FAISS inner product over gallery views
+add_sku(sku, photos): append vectors # new product from 3-5 photos, no retraining
+```
+
+**`identify.py`** [MVP]: picks the SKU for each pack.
+```
+for pack in packs:
+    cands = sku_index.search(embed(crop(pack)), k=5)
+    expected = label_map[bay].sku_at(pack.x)                     # what should be here
+    for c in cands:
+        c.score = c.sim
+                + w_location * (c.sku == expected)
+                + w_size * size_match(pack.w_cm, pack.h_cm, sku_master[c.sku].dims)   # 500 g vs 1 kg
+                + w_text * text_match(ocr(crop), sku_master[c.sku].keywords)          # robot images only
+    best, second = top2(cands)
+    pack.sku = best if best.score > accept and best - second > margin else
+               "AMBIGUOUS" if best.sim > accept else "UNKNOWN_ITEM"
+```
+
+**`labels.py`**: on robot images (~40 px/cm), read each shelf-edge label: OCR text + barcode → `(sku, price, x_start)`.
+
+**`depth.py`** [MVP]
+```
+recess(depth_map, slot) = median(depth in slot's front-face region) - shelf_front_depth
+depth_left_packs = floor((shelf_depth_cm - recess_cm) / sku.pack_depth_cm)
+```
+
+#### Planogram (`planogram/`)
+
+**`schema.py`, `loader.py`, `matcher.py`** [DONE]: planogram types, JSON loader, per-row Needleman-Wunsch alignment → OK / LOW / OUT / MISPLACED / UNKNOWN per slot.
+
+**`label_map.py`**
+```
+update(bay, label_reads): slots = sort(label_reads by x); each label owns [x_i, x_{i+1})
+as_planogram(bay): Bay(rows=[[Slot(sku, x_start, x_end, min_facings=default)]])
+drift(bay): labels whose SKU or position differ from the digital planogram for 3+ days → report
+```
+
+#### State and fusion (`state/`)
+
+**`slot_tracker.py`** [DONE]: raise on k of n frames, resolve after `clear_after` consecutive OK frames.
+
+**`shelf_state.py`** [MVP]: where camera and robot readings meet.
+```
+record[slot] = {sku, facings, units, status, confidence, source, t}
+update(observations, source, t):
+    for o in observations:
+        r = record[o.slot]
+        if o.confidence < c_min: continue
+        if r and r.source != source and abs(t - r.t) < conflict_window and r.status != o.status:
+            mark_unsure(o.slot); mission_queue.add(o.slot.bay, "conflict"); continue
+        record[o.slot] = o if t >= r.t else r                 # newest confident reading wins
+        if source == "robot" and o.depth_left is not None: quantity.reset(o.slot, o.units, t)
+    return changed slots
+```
+
+**`quantity.py`** [MVP]
+```
+estimate(o):
+    if o.facings == 0: return 0                               # vision wins: empty is empty
+    if o.depth_left is not None: return o.facings * o.stack * o.depth_left
+    est = last_count[o.slot] - pos_sales_since(o.slot, last_count_t)   # between scans
+    return clamp(est, o.facings, o.facings * o.stack * max_depth(o.sku))
+low(o) = o.facings < min_facings or estimate(o) < velocity(o.sku) * restock_time + safety
+```
+
+#### Decision (`decision/`) [DONE]
+
+`store_data.py` (POS + stock adapters), `diagnosis.py` (theft checked first, then replenishment gap, true stockout, phantom stock, misplaced), `priority.py` (rupees lost per hour), `tasks.py` (dedup + routing), `verifier.py` (close on RESOLVED, log time-to-restore).
+
+#### Robot planner (`robot_planner/`)
+
+**`scheduler.py`** [MVP]
+```
+tick(now):
+    if now in sweeps and robot idle: publish("missions", full_sweep_route())       # dock → A10 … A0 → dock
+    if mission_queue.ready() and robot idle and allowed(now): publish("missions", route.plan(mission_queue.pop(max_bays)))
+allowed(now) = not in blackout and missions_this_hour < max and pos_tx_last_10min < footfall_max
+```
+
+**`mission_queue.py`** [MVP]
+```
+add(bay, reason): priority = {"blocked": 3, "verify": 2, "conflict": 2, "ambiguous": 1, "promo": 1}[reason] + rupees_at_risk(bay)
+ready(): any item older than 5 min or priority above threshold
+pop(n): top n by priority
+```
+
+**`route.py`** [MVP]
+```
+plan(bays):
+    nodes = [dock] + [front_of(b) for b in bays]
+    order = nearest_neighbour(nodes, dist=aisle_graph.shortest_path)   # ≤ 8 bays: greedy + 2-opt is plenty
+    return waypoints along aisle_graph, speed = speed_mission
+```
+
+#### Storage, API, apps
+
+**`storage/db.py`** [MVP]: SQLite tables `bay_images(meta only)`, `slots`, `events`, `tasks`, `metrics`, `missions`.
+**`api/server.py`** [MVP]: `GET /tasks`, `POST /tasks/{id}/feedback`, `GET /store/map` (slot statuses), `GET /metrics`, `WS /ws/tasks`.
+**`apps/dashboard/app.py`** [MVP]: store map coloured by slot status, robot position and route, task list, availability over the day.
+**`apps/staff/`** [MVP]: task cards (action, product, bay, qty, cause, ₹/h) with **Done** / **Not real**.
+
+### 5.5 Training (`training/`)
+
+```
+train_detector.py:  YOLO on SKU-110K (pack) → fine-tune with gap/rail/label classes → store frames → export TensorRT
+train_embedder.py:  DINOv2 + projection head, ArcFace loss on RP2K + Retail-YU + store crops (P×K batches)
+active_learning.py: weekly: low-confidence crops + "Not real" tasks → label → retrain → rebuild index
+evaluate.py:        detector mAP, SKU top-1, per-slot F1, alert precision, time-to-restore, frame→task latency
+```
+
+### 5.6 Tests
+
+| File | Checks |
+|---|---|
+| `test_matcher.py` [DONE] | missing facing → OUT/LOW, foreign item → MISPLACED, occluded → UNKNOWN |
+| `test_slot_tracker.py` [DONE] | one noisy frame raises nothing; k of n raises once; recovery resolves |
+| `test_diagnosis.py` [DONE] | each cause; theft wins over a full backroom |
+| `test_priority.py` [DONE] | promo and fast sellers outrank slow movers |
+| `test_camera_planner.py` | 2.0 m aisle, 12 m run → 5 cameras at 1.2…10.8 m; 1.5 m aisle → 7 |
+| `test_shelf_state.py` | newest confident wins; camera/robot conflict → unsure + mission |
+| `test_quantity.py` | 0 facings → 0; depth count; sales-based estimate clamps to visible facings |
+| `test_route.py` | 3 bays → short route from dock; blackout hours → no mission |
+
+---
+
+## 6. Data formats
+
+**`configs/store_layout.yaml`**
+```yaml
+store: { width_m: 48, depth_m: 30, hours: "08:00-22:00" }
+bay: { width_m: 1.2, height_m: 2.1, depth_cm: 45, levels: 6 }
+runs:
+  - { id: G1, x_m: 8.6, y_m: 10.0, length_m: 12, tier: camera, category: staples }
+  # … G2-G5 tier: camera; G6-G10 tier: robot_only
+aisles: { width_m: 2.0, ids: [A0, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10] }
+backroom: { dock: [42.2, 4.8], edge_server: [42.3, 1.9] }
+```
+
+**Bay planogram** (`data/planograms/G1-L-04.json`, optional; else built from labels)
+```json
+{"bay_id": "G1-L-04", "rows": [[{"position": 0, "sku_id": "RICE_1KG", "facings": 3, "min_facings": 1, "x_start_cm": 0, "x_end_cm": 30}]]}
+```
+
+**Robot pose track** (`data/samples/robot/pose.csv`): `t, x_m, y_m, heading_deg, frame_file`
+
+**Task** (to staff)
+```json
+{"id": "T-0142", "priority": "P1", "action": "RESTOCK", "sku_id": "RICE_1KG", "bay": "G1-L-04",
+ "qty": 12, "cause": "REPLENISHMENT_GAP", "rupees_per_h": 420, "status": "OPEN"}
+```
+
+## 7. Datasets
+
+| Dataset | Used for | Get it |
+|---|---|---|
+| SKU-110K | Pack detector | github.com/eg4000/SKU110K_CVPR19, or Ultralytics `SKU-110K.yaml` (academic, non-commercial) |
+| RP2K | SKU embeddings | pinlandata.com/rp2k_dataset |
+| Retail-YU | One-shot new SKUs | Mendeley Data |
+| Locount | Counting stacked items | ISCAS GitLab (locount-dataset) |
+| Unitail | Angled views, pack text | ECCV 2022 release |
+| Roboflow empty-shelf sets | Gap class | universe.roboflow.com (check licences) |
+| Everseen dataset | Finale fine-tuning | Given to shortlisted teams; one adapter in `training/` |
+
+## 8. Running the demo
+
+```bash
+make setup
+python scripts/plan_cameras.py --layout configs/store_layout.yaml      # prints 50 cameras, writes cameras.yaml
+python scripts/build_gallery_index.py --gallery data/gallery
+python scripts/simulate_store.py --speed 10x   # starts camera service (video), robot bridge (fake API), brain
+streamlit run apps/dashboard/app.py
+```
+Demo script: pull packs off the shelf in the "camera" video → task appears within a minute → restock → task closes itself. Block the camera with a box for 15 simulated minutes → the planner sends the "robot" (walk-along video) to that bay.
+
+## 9. Evaluation
+
+| Layer | Metric | Target (pilot, to validate) |
+|---|---|---|
+| Business | On-shelf availability, camera runs vs others | +3 to +5 points |
+| Business | Median empty → restocked | < 30 min |
+| Ops | Alert precision (staff-confirmed) | > 90% |
+| Business | Lost sales avoided | ₹ per store per week |
+| Model | Detector mAP, SKU top-1, per-slot F1 | report |
+| System | Frame → task latency | < 60 s on the edge server |
+
+## 10. Scope and assumptions
+
+- Store: generic ~15,000 sq ft, 200 bays; the camera planner and robot count scale to other sizes.
+- Read access to POS sales and store-level stock; without it, vision-only alerts (no cause).
+- Robot vendor exposes an API for waypoints, pose and frames.
+- No face recognition or identity tracking; people blurred on the edge server; raw frames kept ≤ 24 h.
+- Out of scope: produce, loose items, chillers (phase 2), spring-loaded shelves, peg-hook depth, CCTV.
+
+*Licence: MIT for our code; datasets keep their own licences.*
