@@ -1,0 +1,13 @@
+name: facing_up
+description: Rice sells down, then staff spread the last packs so the front looks full; no depth.
+expect: Camera keeps seeing all 12 facings (depth unknown) while POS shows 28 sold. Later, LOW_ESTIMATED from the sales estimate plus a robot verify mission.
+start: "10:00"
+end: "10:45"
+bays: [G1-L-04]
+depth_known: false
+start_units: [{bay: G1-L-04, row: 2, position: 0, units: 40}]
+events:
+  - {at: "10:05", do: sell, bay: G1-L-04, row: 2, position: 0, qty: 10}
+  - {at: "10:15", do: sell, bay: G1-L-04, row: 2, position: 0, qty: 10}
+  - {at: "10:25", do: sell, bay: G1-L-04, row: 2, position: 0, qty: 8}
+  - {at: "10:30", do: face_up, bay: G1-L-04, row: 2, position: 0}

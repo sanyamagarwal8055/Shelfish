@@ -1,0 +1,8 @@
+name: noisy_frame
+description: One camera frame misses the whole rice row; the shelf is really full.
+expect: No events at all.
+start: "10:00"
+end: "10:20"
+bays: [G1-L-04]
+events:
+  - {at: "10:05", do: misread, source: camera, bay: G1-L-04, row: 2, position: 0, units: 0}

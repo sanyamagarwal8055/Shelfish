@@ -1,0 +1,8 @@
+name: conflict
+description: At the 15:00 sweep the robot sees the rice row empty while the cameras see it full.
+expect: Camera and robot disagree within 5 min. Later, the slot is marked unsure with no alert, and a re-check mission is queued.
+start: "14:50"
+end: "15:10"
+bays: [G1-L-04]
+events:
+  - {at: "15:00", do: misread, source: robot, bay: G1-L-04, row: 2, position: 0, units: 0}
