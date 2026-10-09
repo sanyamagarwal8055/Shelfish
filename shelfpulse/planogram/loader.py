@@ -24,6 +24,14 @@ class PlanogramStore:
             self._cache[bay_id] = self._load(bay_id)
         return self._cache[bay_id]
 
+    def put_label_map(self, plan: Planogram) -> bool:
+        """Use a freshly built label map for a bay, unless it has a digital planogram."""
+        current = self.get(plan.bay_id)
+        if current is not None and current.source != "label_map":
+            return False
+        self._cache[plan.bay_id] = plan
+        return True
+
     def _load(self, bay_id: str) -> Planogram | None:
         for d in self.dirs:
             path = d / f"{bay_id}.json"
