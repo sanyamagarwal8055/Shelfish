@@ -13,8 +13,9 @@ wide lens. Writes, under --out:
     story.json          the scripted events
 
 Default story (minutes from the start): RICE_1KG on G1-L-04 row 0 sells one pack a minute from
-minute 5 until it is empty, staff restock G1-L-04 at minute 45; a shopper stands in front of
-G1-L-05 from minute 30 to 50; every bay also sells slowly at random.
+minute 5 until it is empty, staff restock G1-L-04 at minute 45; a shopper with a trolley blocks
+most of G1-L-05 from minute 30 to 50 (the Brain should send the robot at minute 45); every bay
+also sells slowly at random.
 """
 
 from __future__ import annotations
@@ -61,7 +62,9 @@ MARGIN_PX = 100  # frame border around the bays
 class Story:
     sell_out: tuple = ("G1-L-04", 0, 0, 5)  # bay, row, slot position, start minute (1 pack/min)
     restock: tuple = ("G1-L-04", 45)  # bay, minute
-    occlude: tuple = ("G1-L-05", 30, 50, 30.0, 90.0)  # bay, from, to (excl.), x0_cm, x1_cm
+    # A shopper with a trolley, 1 m wide: hides ~70% of the bay, so the Brain counts it as
+    # blocked (> 50% hidden) and sends the robot after 15 minutes.
+    occlude: tuple = ("G1-L-05", 30, 50, 10.0, 110.0)  # bay, from, to (excl.), x0_cm, x1_cm
     background_per_hour: float = 4.0  # random sales per bay per hour
     sell_per_minute: int = 1  # packs the sell_out slot loses each minute
 
