@@ -1,8 +1,8 @@
 name: peak_hours
-description: A camera bay is blocked from 18:45 to 19:30, inside the 18:00-21:00 mission blackout.
-expect: Blocked 15+ min by 19:00, but no mission until 21:00. No alerts while occluded.
+description: A promo stand blocks a camera's view of its bay from 18:45 to 21:10, across the 18:00-21:00 mission blackout.
+expect: Blocked 15+ min by 19:00, but no mission until 21:00; then one mission to G1-L-04. No alerts.
 start: "18:40"
 end: "21:15"
 bays: [G1-L-04]
 events:
-  - {at: "18:45", do: occlude, bay: G1-L-04, x: [0.0, 120.0], until: "19:30"}
+  - {at: "18:45", do: occlude, bay: G1-L-04, x: [0.0, 120.0], until: "21:10", source: camera}

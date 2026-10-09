@@ -40,6 +40,17 @@ priority: # rupees lost per hour = velocity (packs/h) x margin (Rs/pack)
   p2_min_rupees_per_h: 20
   min_priority: { LOSS_PREVENTION: P1, CYCLE_COUNT: P2, REORDER: P2 }
 
+planner: # robot planner: which bays get a second look, and when
+  reason_priority: { blocked: 3, conflict: 2, verify: 2, ambiguous: 1, promo: 1 }
+  ready_after_min: 5 # a queued bay is due after waiting this long ...
+  ready_priority: 3 # ... or at once at this priority (a blocked camera bay)
+  requeue_cooldown_min: 60 # after the robot reads a bay, don't re-queue it for this long ...
+  cooldown_reasons: [blocked, ambiguous] # ... for these reasons (its fresh look answers them)
+  verify_after_min: 30 # verify a restock no camera can see this long after the task
+  sweep_grace_min: 10 # a sweep still starts if the clock is at most this late
+  sweep_duration_min: 60 # the robot is busy this long after a sweep starts
+  bay_scan_s: 4 # time to film one bay on a mission (1.2 m at 0.3 m/s)
+
 sim: # store simulator (sim/): how the fake Vision track reports
   camera_interval_s: 60 # locked design: 1 frame per minute
   camera_quality: 0.92

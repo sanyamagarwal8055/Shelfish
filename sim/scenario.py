@@ -11,7 +11,8 @@ Events (`do:`), applied at the start of their minute, before that minute's frame
     face_up      bay row position          staff spread the slot's packs across every facing
     misplace     bay row x_cm sku          a stray pack appears at x_cm
     unmisplace   bay row                   stray packs on the row are taken away
-    occlude      bay x [rows] [until]      a person/trolley hides x range [a, b] on rows (all rows)
+    occlude      bay x [rows] [until] [source]   a person/trolley hides x range [a, b] on rows
+                                           (all rows); source: camera = only the camera's view
     quality      bay value [until]         camera frames of the bay get this quality score
     misread      source bay row position units [until]   that source sees `units` packs there
     ambiguous    sku candidates [until]    Vision reports the sku as AMBIGUOUS:<candidates>
@@ -110,7 +111,7 @@ class Scenario(_Model):
     end: HHMM
     seed: int = 0
     bays: list[BayId]
-    depth_known: bool = True  # stereo depth available -> packs carry depth_left
+    depth_known: bool = True  # camera stereo depth -> depth_left (robot ToF always has it)
     fill: float = Field(default=1.0, ge=0, le=1)  # starting shelf fill, fraction of capacity
     start_units: list[StartUnits] = Field(default_factory=list)  # per-slot override of `fill`
     stock: dict[SkuId, Stock] = Field(default_factory=dict)

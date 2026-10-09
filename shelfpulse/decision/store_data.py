@@ -50,6 +50,14 @@ class StoreData:
         hi = bisect.bisect_right(rows, t1, key=lambda x: x[0])
         return sum(q for _, q in rows[lo:hi])
 
+    def transactions(self, t0: datetime, t1: datetime) -> int:
+        """POS lines (all SKUs) in (t0, t1]: how busy the store is."""
+        n = 0
+        for rows in self.sales.values():
+            lo = bisect.bisect_right(rows, t0, key=lambda x: x[0])
+            n += bisect.bisect_right(rows, t1, key=lambda x: x[0]) - lo
+        return n
+
     def _snapshot(self, sku: str, t: datetime) -> tuple[datetime, int, int] | None:
         rows = self.snapshots.get(sku, [])
         i = bisect.bisect_right(rows, t, key=lambda x: x[0])
