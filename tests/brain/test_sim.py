@@ -1,8 +1,7 @@
-"""Step 3: the store simulator, and what the brain makes of each scenario so far.
+"""The store simulator with the brain in the loop: each scenario's outcome end to end.
 
-Each scenario's `expect:` says the full target outcome. These tests check the parts that exist
-today (readings, POS, stock, events); tasks, fusion, quantity and missions add their checks as
-those steps land.
+Each scenario's `expect:` says the target outcome; these tests check it: readings, POS and
+stock, events, tasks, robot missions and the robot's status reports.
 """
 
 from __future__ import annotations
@@ -15,10 +14,9 @@ from pathlib import Path
 import pytest
 
 from shelfpulse import bus
-from shelfpulse.brain import load_brain_config, run
-from shelfpulse.contracts import BayReading, check_skus, reading_skus
+from shelfpulse.contracts import BayReading, Mission, RobotStatus, check_skus, reading_skus
 from shelfpulse.decision.types import Event, SlotObservation, StrayItem, Task
-from sim.run import simulate
+from sim.run import simulate, simulate_with_brain
 from sim.scenario import load_scenario, scenario_names
 from sim.store import spread
 
@@ -29,9 +27,11 @@ SKUS = ROOT / "data" / "sku_master.csv"
 class Result:
     def __init__(self, name: str, out: Path):
         self.sc = load_scenario(name)
-        self.store = simulate(self.sc, out)
-        summary = run(out / "bay_readings.jsonl", out, load_brain_config(), SKUS)
-        self.recheck = summary.recheck_bays
+        self.store, self.summary = simulate_with_brain(self.sc, out)
+        self.recheck = self.summary.recheck_bays
+        self.missions = bus.read_jsonl(out / "missions.jsonl", Mission)
+        status = out / "robot_status.jsonl"
+        self.statuses = bus.read_jsonl(status, RobotStatus) if status.exists() else []
         self.observations = bus.read_jsonl(out / "observations.jsonl", SlotObservation)
         self.readings = bus.read_jsonl(out / "bay_readings.jsonl", BayReading)
         self.events = bus.read_jsonl(out / "events.jsonl", Event)
@@ -151,15 +151,27 @@ def test_noisy_frame(sim):
     assert empty and not empty[0].rows[2].packs  # the bad frame really was empty
 
 
-def test_occlusion_no_alert_while_hidden(sim):
+def test_occlusion_robot_sees_what_the_camera_cannot(sim):
     r = sim("occlusion_then_robot")
-    assert all(e.t >= r.minute("10:40") for e in r.events)
-    hidden = [x for x in r.readings if r.minute("10:05") <= x.t < r.minute("10:40")]
+    hidden = [x for x in r.readings
+              if x.source == "camera" and r.minute("10:05") <= x.t < r.minute("10:40")]  # fmt: skip
     assert hidden and all(row.occluded == [[0.0, 120.0]] for x in hidden for row in x.rows)
+    (m,) = r.missions
+    assert (m.kind, m.bays, m.reasons, m.created_at) == (
+        "mission", ["G1-L-04"], {"G1-L-04": "blocked"}, r.minute("10:20"),
+    )  # fmt: skip
+    (out,) = r.events
+    assert (out.kind, out.source, out.sku) == ("OUT", "robot", "RICE_1KG")
+    assert r.minute("10:20") < out.t < r.minute("10:40")  # before the camera sees again
+    assert [t.action for t in r.tasks] == ["RESTOCK"]
+    assert r.statuses[-1].state == "docked" and r.statuses[-1].done_bays == ["G1-L-04"]
 
 
-def test_peak_hours_no_alert_while_hidden(sim):
-    assert sim("peak_hours").events == []
+def test_peak_hours_mission_waits_for_blackout_end(sim):
+    r = sim("peak_hours")
+    assert r.events == []
+    (m,) = r.missions
+    assert m.created_at == r.minute("21:00") and m.reasons == {"G1-L-04": "blocked"}
 
 
 def test_ambiguous_never_misplaced(sim):
@@ -167,6 +179,8 @@ def test_ambiguous_never_misplaced(sim):
     assert "MISPLACED" not in r.kinds()
     assert r.events == []
     assert {s.kind for s in r.strays} == {"AMBIGUOUS"}
+    (m,) = r.missions  # one look from the robot, then the cooldown stops repeats
+    assert m.reasons == {"G1-L-04": "ambiguous"} and m.created_at == r.minute("10:10")
 
 
 def test_facing_up_low_from_the_estimate(sim):
@@ -174,10 +188,15 @@ def test_facing_up_low_from_the_estimate(sim):
     last = r.readings[-1].rows[0]
     assert len(last.packs) == 3 and all(p.depth_left is None for p in last.packs)  # looks full
     assert sum(int(p["qty"]) for p in r.pos) == 18
-    assert r.kinds() == ["LOW_ESTIMATED", "LOW_ESTIMATED"]
-    assert {e.source for e in r.events} == {"estimate"}
-    assert r.tasks == []  # an estimate alone never makes a staff task
-    assert r.recheck == {"G1-L-05": "verify"}
+    est = [e for e in r.events if e.kind == "LOW_ESTIMATED"]
+    assert len(est) == 2 and {e.source for e in est} == {"estimate"}
+    # the estimate only sends the robot ...
+    (m,) = r.missions
+    assert m.reasons == {"G1-L-05": "verify"}
+    # ... whose depth count confirms it: a measured LOW, and only then a staff task
+    low = [e for e in r.events if e.kind == "LOW"]
+    assert len(low) == 2 and {e.source for e in low} == {"robot"} and low[0].t > m.created_at
+    assert [t.action for t in r.tasks] == ["REORDER"]  # no backroom stock
 
 
 def test_conflict_marks_slot_unsure(sim):
@@ -188,7 +207,8 @@ def test_conflict_marks_slot_unsure(sim):
     cam = [x for x in r.readings if x.source == "camera" and x.t == r.minute("15:00")]
     assert len(cam[0].rows[2].packs) == 12
     assert r.events == [] and r.tasks == []  # no alert either way
-    assert r.recheck == {"G1-L-04": "conflict"}
+    assert r.recheck == {"G1-L-04": "conflict"}  # queued; the robot is out on its 15:00 sweep
+    assert [m.kind for m in r.missions] == ["sweep"]
     unsure = [o for o in r.observations if o.status == "UNSURE"]
     assert unsure and all(o.row == 2 for o in unsure)
 
@@ -271,3 +291,10 @@ def test_unidentified_packs_read_as_unknown(tmp_path):
         if r.t.minute in (5, 9)
     ]
     assert rows and all({p.sku for p in row.packs} == {"UNKNOWN"} for row in rows)
+
+
+@pytest.mark.parametrize(
+    "name", ["restock_simple", "true_stockout", "phantom_stock", "misplaced", "noisy_frame"]
+)
+def test_no_missions_when_cameras_see_everything(sim, name):
+    assert sim(name).missions == []

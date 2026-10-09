@@ -29,6 +29,7 @@ from shelfpulse.contracts import (
     Row,
     SkuRow,
 )
+from shelfpulse.decision.store_data import StoreData
 from sim.scenario import Scenario, SimEvent
 
 
@@ -101,11 +102,15 @@ class SimStore:
     misreads: dict[tuple[str, str, int, int], Window] = field(default_factory=dict)
     ambiguous: dict[str, Window] = field(default_factory=dict)
     unidentified: dict[str, Window] = field(default_factory=dict)
+    data: StoreData = field(default_factory=StoreData)  # live POS + stock, as the Brain sees it
+    robot_log: dict[str, dict[str, list[str]]] = field(default_factory=dict)  # mission -> bays
+    dock_xy: tuple[float, float] = (0.0, 0.0)
 
     @classmethod
     def build(cls, sc: Scenario, skus: dict[str, SkuRow], plans: dict[str, Planogram],
               shelf_depth_cm: float) -> SimStore:  # fmt: skip
         st = cls(sc, skus, plans, shelf_depth_cm, np.random.default_rng(sc.seed))
+        st.data.data_start = sc.t_start
         for bay in sc.bays:
             for r, row in enumerate(plans[bay].rows):
                 for s in row:
@@ -136,12 +141,15 @@ class SimStore:
     # --- stock bookkeeping ---------------------------------------------------------------------
 
     def snapshot(self, t: datetime, sku: str) -> None:
-        self.inventory.append((t, sku, self.system.get(sku, 0), self.backroom.get(sku, 0)))
+        row = (t, sku, self.system.get(sku, 0), self.backroom.get(sku, 0))
+        self.inventory.append(row)
+        self.data.snapshots.setdefault(sku, []).append((t, row[2], row[3]))
 
     def sell(self, t: datetime, slot: Slot, qty: int) -> None:
         sold = slot.take(qty, self.rng)
         if sold:
             self.pos.append((t, slot.sku, sold))
+            self.data.sales.setdefault(slot.sku, []).append((t, sold))
             self.system[slot.sku] = self.system.get(slot.sku, 0) - sold
         if qty > sold:
             self.lost_sales[slot.sku] = self.lost_sales.get(slot.sku, 0) + qty - sold
@@ -180,7 +188,7 @@ class SimStore:
             self.strays.pop((ev.bay, ev.row), None)
         elif ev.do == "occlude":
             rows = tuple(ev.rows) if ev.rows is not None else None
-            self.occlusions.setdefault(ev.bay, []).append(Window(until, (ev.x, rows)))
+            self.occlusions.setdefault(ev.bay, []).append(Window(until, (ev.x, rows, ev.source)))
         elif ev.do == "quality":
             self.quality[ev.bay] = Window(until, ev.value)
         elif ev.do == "misread":
@@ -197,21 +205,22 @@ class SimStore:
 
     def reading(self, bay: str, source: str, t: datetime, quality: float, conf: float,
                 ambiguous_conf: float) -> BayReading:  # fmt: skip
-        occ_windows = [w for w in self.occlusions.get(bay, []) if t < w.until]
+        occ_windows = [w for w in self.occlusions.get(bay, [])
+                       if t < w.until and w.data[2] in (None, source)]  # fmt: skip
         q = self.quality.get(bay)
         if source == "camera" and q and t < q.until:
             quality = q.data
         rows = []
         for r, plan_row in enumerate(self.plans[bay].rows):
             occluded = sorted(
-                list(x) for w in occ_windows for x, rows_ in [w.data] if rows_ is None or r in rows_
+                list(w.data[0]) for w in occ_windows if w.data[1] is None or r in w.data[1]
             )
             packs = []
             for s in plan_row:
                 slot = self.slots[(bay, r, s.position)]
                 packs += self._slot_packs(slot, source, t, conf, ambiguous_conf)
             for sku, x in self.strays.get((bay, r), []):
-                packs.append(self._pack(sku, x, 1, conf, ambiguous_conf, t))
+                packs.append(self._pack(sku, x, 1, conf, ambiguous_conf, t, source))
             packs = [p for p in packs if not _hidden(p, occluded)]
             packs.sort(key=lambda p: p.x_cm)
             labels = []
@@ -237,13 +246,13 @@ class SimStore:
         if mis and t < mis.until:
             cols = spread(mis.data, len(cols), slot.depth_cap)
         return [
-            self._pack(slot.sku, slot.x_start + i * slot.width, c, conf, ambiguous_conf, t)
+            self._pack(slot.sku, slot.x_start + i * slot.width, c, conf, ambiguous_conf, t, source)
             for i, c in enumerate(cols)
             if c
         ]
 
     def _pack(self, sku: str, x: float, depth: int, conf: float, ambiguous_conf: float,
-              t: datetime) -> Pack:  # fmt: skip
+              t: datetime, source: str) -> Pack:  # fmt: skip
         row = self.skus[sku]
         name, c = sku, conf
         amb = self.ambiguous.get(sku)
@@ -252,8 +261,9 @@ class SimStore:
         unk = self.unidentified.get(sku)
         if unk and t < unk.until:
             name, c = "UNKNOWN", ambiguous_conf
+        has_depth = source == "robot" or self.sc.depth_known  # robot ToF always measures depth
         return Pack(sku=name, conf=c, x_cm=round(x, 2), w_cm=row.width_cm, h_cm=row.height_cm,
-                    stack=1, depth_left=depth if self.sc.depth_known else None)  # fmt: skip
+                    stack=1, depth_left=depth if has_depth else None)  # fmt: skip
 
     def _price(self, sku: str) -> float:
         return round(self.skus[sku].margin_inr * 5, 2)  # illustrative shelf price
