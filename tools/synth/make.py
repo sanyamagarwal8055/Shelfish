@@ -37,6 +37,7 @@ from shelfpulse.contracts import (
     Gap,
     Pack,
     Planogram,
+    PlanogramSlot,
     Row,
     SkuRow,
     load_sku_master,
@@ -411,6 +412,55 @@ def load_planograms(folder: Path) -> list[Planogram]:
     return planos
 
 
+def random_planogram(
+    bay_id: str, skus: dict[str, SkuRow], geo: Geometry, rng: np.random.Generator
+) -> Planogram:
+    """A plausible planogram for a bay that has none: 1-3 SKUs per row from the run's category
+    (any SKU if the category has none), each slot as wide as a whole number of facings."""
+    smap = store_map.load()
+    category = smap.runs[smap.bays[bay_id].run].category
+    pool = sorted(s for s, r in skus.items() if r.category == category) or sorted(skus)
+    rows = []
+    for _ in ROWS:
+        n = int(rng.integers(1, 4))
+        picks = [pool[int(i)] for i in rng.choice(len(pool), size=min(n, len(pool)), replace=False)]
+        bounds = np.linspace(0, BAY_WIDTH_CM, len(picks) + 1)
+        slots = []
+        for pos, (sku, a, b) in enumerate(zip(picks, bounds, bounds[1:], strict=False)):
+            facings = int((b - a) // skus[sku].width_cm)
+            slots.append(
+                PlanogramSlot(
+                    position=pos,
+                    sku_id=sku,
+                    x_start_cm=round(float(a), 2),
+                    x_end_cm=round(float(b), 2),
+                    facings=facings,
+                    min_facings=min(1, facings),
+                )
+            )
+        rows.append(slots)
+    return Planogram(bay_id=bay_id, source="planogram", rows=rows)
+
+
+def planograms_for(
+    bays: list[str] | None,
+    folder: Path | None,
+    skus: dict[str, SkuRow],
+    geo: Geometry,
+    rng: np.random.Generator,
+) -> list[Planogram]:
+    """Planograms from the folder; bays named but not in it get a random_planogram."""
+    planos = load_planograms(folder or default_planograms())
+    if not bays:
+        return planos
+    by_bay = {p.bay_id: p for p in planos}
+    smap = store_map.load()
+    unknown = [b for b in bays if b not in smap.bays]
+    if unknown:
+        raise ValueError(f"not bays in configs/store_layout.yaml: {unknown}")
+    return [by_bay.get(b) or random_planogram(b, skus, geo, rng) for b in bays]
+
+
 def default_planograms() -> Path:
     real = Path("data/planograms")
     return (
@@ -441,11 +491,7 @@ def make(
     geo = load_geometry()
     skus = load_sku_master(sku_master)
     smap = store_map.load()
-    planos = load_planograms(planograms or default_planograms())
-    if bays:
-        planos = [p for p in planos if p.bay_id in bays]
-        if not planos:
-            raise ValueError(f"no planograms for bays {bays}")
+    planos = planograms_for(bays, planograms, skus, geo, rng)
     shots = load_gallery(gallery)
     t0 = start or datetime.fromisoformat(DEFAULT_START)
 
@@ -498,7 +544,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--planograms", type=Path, help="folder of <bay_id>.json")
     ap.add_argument("--sku-master", type=Path, default=Path("data/sku_master.csv"))
     ap.add_argument("--gallery", type=Path, default=Path("data/gallery"))
-    ap.add_argument("--bays", help="comma-separated bay_ids (default: every planogram)")
+    ap.add_argument(
+        "--bays", help="comma-separated bay_ids (default: every planogram; others get a random one)"
+    )
     ap.add_argument("--start", type=datetime.fromisoformat, help="ISO time of the first frame")
     args = ap.parse_args(argv)
     try:

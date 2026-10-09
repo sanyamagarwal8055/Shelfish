@@ -67,6 +67,8 @@ def load_pipeline(
         min_cover=sh["min_cover"],
         occlusion_tol=sh["occlusion_tol"],
         min_occlusion_cm=sh["min_occlusion_cm"],
+        depth_margin_mm=sh["depth_margin_mm"],
+        depth_cover=sh["depth_cover"],
     )
     d = cfg["detector"]
     c = d["classic"]
@@ -78,7 +80,15 @@ def load_pipeline(
         edge_cover=c["edge_cover"],
         conf=c["conf"],
     )
-    detector = Detector(backend or d["backend"], d["weights"], d["conf"], d["imgsz"], classic)
+    detector = Detector(
+        _backend(backend or d["backend"], d["weights"]),
+        d["weights"],
+        d["conf"],
+        d["imgsz"],
+        classic,
+        per_row=d["per_row"],
+        row_margin_cm=d["row_margin_cm"],
+    )
     identifier = load_identifier(name) if identify else None
     dc = cfg["depth"]
     depth = depth_mod.DepthSettings(
@@ -96,6 +106,20 @@ def load_pipeline(
         depth,
         load_sku_master(),
     )
+
+
+def _backend(backend: str, weights: str) -> str:
+    """'auto': YOLO when its weights file exists, else the classic baseline (with a note)."""
+    if backend != "auto":
+        return backend
+    path = Path(weights) if Path(weights).is_absolute() else REPO_ROOT / weights
+    if path.is_file():
+        return "yolo"
+    print(
+        f"note: no YOLO weights at {path}; using the classic detector (synthetic shelves only)",
+        file=sys.stderr,
+    )
+    return "classic"
 
 
 def load_identifier(name: str = "perception") -> Identifier | None:
@@ -242,7 +266,7 @@ def analyze(
         raise ValueError(f"depth_map {depth_map.shape} not aligned with image {bay_image.shape}")
     p = pipeline or default_pipeline()
     px_per_cm = bay_image.shape[1] / BAY_WIDTH_CM
-    shelves = find_shelves(bay_image, px_per_cm, p.shelves)
+    shelves = find_shelves(bay_image, px_per_cm, p.shelves, depth_map)
     boxes = p.detector.detect(bay_image, shelves, px_per_cm)
     namer = _namer(p.identifier, bay_image, boxes, bay_id) if p.identifier and boxes else None
     depther = _depther(depth_map, p) if depth_map is not None else None

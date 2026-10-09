@@ -21,13 +21,17 @@ shelves:
   min_cover: 0.4 # fraction of the width a rail edge must span
   occlusion_tol: 45 # colour distance from the rail's own colour that means "something in front"
   min_occlusion_cm: 5
+  depth_margin_mm: 50 # with a depth map: this much closer than the shelf edge = in front of it
+  depth_cover: 0.05 # share of a column's row pixels in front of the edge that marks it occluded
 
 detector:
-  backend: classic # classic (OpenCV baseline, synthetic only) | yolo (real photos)
+  backend: auto # auto = yolo if the weights file exists, else classic | yolo | classic
   weights: data/models/sku110k_yolo.pt # git-ignored; train with training/train_sku110k.py
   conf: 0.25
-  imgsz: 1280
+  imgsz: 640 # the size the SKU-110K model was trained at (1280 measured much worse)
   row_tolerance_cm: 8 # a box's bottom must be this close to a shelf surface
+  per_row: false # yolo per shelf-row strip: measured worse (3.51 vs 1.72 facing err) - the model knows small packs
+  row_margin_cm: 2 # strip margin above/below the row
   classic:
     bg_tol: 40
     band_cm: [1.0, 4.0]

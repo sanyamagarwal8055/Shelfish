@@ -1,0 +1,16 @@
+{
+  "model": "yolo11n.pt fine-tuned on SKU-110K",
+  "trained": "Kaggle T4, 30 epochs, imgsz 640, batch 16, about 2 h (training/train_sku110k.py)",
+  "weights": "data/models/sku110k_yolo.pt (git-ignored; shared on Drive)",
+  "test_split": {
+    "images": 2936,
+    "map50": 0.9036,
+    "map50_95": 0.5506,
+    "precision": 0.8993,
+    "recall": 0.8311,
+    "max_det": 1000,
+    "measured_at": "2026-10-08T21:53:15+00:00",
+    "measured_by": "training/eval_sku110k.py"
+  },
+  "val_map50_by_epoch": {"1": 0.7587, "10": 0.8642, "20": 0.8903, "30": 0.8971}
+}
