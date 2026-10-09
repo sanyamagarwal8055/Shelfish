@@ -4,7 +4,7 @@ Kaggle notebook (GPU T4 x2, Internet on). Add the current weights as a dataset i
 best.pt or best.zip - it is the same file), one cell, then Save Version -> Save & Run All:
     !git clone https://github.com/sanyamagarwal8055/Shelfish.git /tmp/Shelfish
     %cd /tmp/Shelfish
-    !pip install -q -r requirements.txt ultralytics
+    !pip install -q -r requirements.txt ultralytics faiss-cpu
     !python training/finetune_synth.py --weights /kaggle/input/<your-dataset>/best.zip
     !mkdir -p /kaggle/working/out && cp runs/train/sku110k_synth/weights/best.pt \\
         runs/eval/finetune_compare.json /kaggle/working/out/
@@ -68,6 +68,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--imgsz", type=int, default=640)
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--device", default="0")
+    ap.add_argument("--optimizer", default="AdamW", help="explicit, so --lr0 is honoured")
+    ap.add_argument("--lr0", type=float, default=0.0005)
+    ap.add_argument("--freeze", type=int, default=0, help="freeze the first N layers (0 = none)")
+    ap.add_argument("--name", default="sku110k_synth", help="run name under runs/train/")
     ap.add_argument("--seed", type=int, default=1)
     args = ap.parse_args(argv)
 
@@ -105,12 +109,14 @@ def main(argv: list[str] | None = None) -> int:
         imgsz=args.imgsz,
         batch=args.batch,
         device=args.device,
-        lr0=0.002,
+        optimizer=args.optimizer,
+        lr0=args.lr0,
+        freeze=args.freeze or None,
         project=str(REPO / "runs" / "train"),
-        name="sku110k_synth",
+        name=args.name,
         exist_ok=True,
     )
-    new = REPO / "runs" / "train" / "sku110k_synth" / "weights" / "best.pt"
+    new = REPO / "runs" / "train" / args.name / "weights" / "best.pt"
 
     result = {}
     for label, w in (("old", old), ("new", new)):
