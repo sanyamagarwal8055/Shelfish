@@ -26,7 +26,9 @@ shelves:
 
 detector:
   backend: auto # auto = yolo if the weights file exists, else classic | yolo | classic
-  weights: data/models/sku110k_yolo.pt # git-ignored; train with training/train_sku110k.py
+  # git-ignored. sku110k_yolo_synth_v2.pt = SKU-110K model fine-tuned on synthetic small packs
+  # (training/finetune_synth.py); the plain SKU-110K model is data/models/sku110k_yolo.pt.
+  weights: data/models/sku110k_yolo_synth_v2.pt
   conf: 0.25
   imgsz: 640 # the size the SKU-110K model was trained at (1280 measured much worse)
   row_tolerance_cm: 8 # a box's bottom must be this close to a shelf surface

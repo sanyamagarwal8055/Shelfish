@@ -1,0 +1,30 @@
+{
+  "old": {
+    "sku110k_test": {
+      "map50": 0.9053,
+      "map50_95": 0.5518,
+      "precision": 0.8994,
+      "recall": 0.833
+    },
+    "synthetic_heldout_val": {
+      "map50": 0.931,
+      "map50_95": 0.6879,
+      "precision": 0.9059,
+      "recall": 0.8612
+    }
+  },
+  "new": {
+    "sku110k_test": {
+      "map50": 0.8993,
+      "map50_95": 0.5445,
+      "precision": 0.8939,
+      "recall": 0.8287
+    },
+    "synthetic_heldout_val": {
+      "map50": 0.9934,
+      "map50_95": 0.9392,
+      "precision": 0.9808,
+      "recall": 0.9812
+    }
+  }
+}
