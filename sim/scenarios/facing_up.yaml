@@ -1,6 +1,6 @@
 name: facing_up
 description: Atta sells fast; staff spread the last packs so the front looks full; cameras have no depth.
-expect: Cameras keep seeing atta facings (depth unknown) while sales say about 6 packs are left. LOW_ESTIMATED on both atta slots, no OUT/LOW, no staff task, and a robot verify re-check queued.
+expect: Cameras keep seeing atta facings (depth unknown) while sales say about 6 packs are left. LOW_ESTIMATED on both atta slots (no staff task from the estimate) sends the robot to verify; its depth count confirms a real LOW, and only then a REORDER task (no backroom stock).
 start: "10:00"
 end: "10:45"
 bays: [G1-L-05]

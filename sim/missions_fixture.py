@@ -1,10 +1,13 @@
-"""Write contracts/fixtures/missions/demo_missions.jsonl from the real robot planner.
+"""Write the missions fixtures in contracts/fixtures/missions/ from the real robot planner.
 
     python -m sim.missions_fixture
 
-Gives the Vision robot bridge real planner output to test against: the 07:00 sweep; one routed
-mission over camera bays, robot-only bays and an end cap queued for every trigger reason; and
-the single-bay missions the brain sends in the occlusion_then_robot and ambiguous scenarios.
+Gives the Vision robot bridge real planner output to test against:
+
+    demo_missions.jsonl  one routed mission over camera bays, robot-only bays and an end cap,
+                         queued for every trigger reason, plus the single-bay missions the brain
+                         sends in the occlusion_then_robot and ambiguous scenarios (fast to run)
+    demo_sweep.jsonl     the 07:00 sweep alone (bays [] = every bay: slow without recordings)
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ from shelfpulse.robot_planner.scheduler import Scheduler
 from sim.run import simulate_with_brain
 from sim.scenario import load_scenario
 
-OUT = REPO_ROOT / "contracts" / "fixtures" / "missions" / "demo_missions.jsonl"
+FOLDER = REPO_ROOT / "contracts" / "fixtures" / "missions"
 QUEUED = [  # bay, reason
     ("G1-L-05", "blocked"),
     ("G3-L-05", "ambiguous"),
@@ -56,10 +59,13 @@ def build() -> list[Mission]:
 
 def main() -> int:
     missions = build()
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text("", encoding="utf-8")
-    bus.append_jsonl(OUT, missions)
-    print(f"wrote {len(missions)} missions to {OUT.relative_to(REPO_ROOT)}")
+    FOLDER.mkdir(parents=True, exist_ok=True)
+    for name, kind in (("demo_missions.jsonl", "mission"), ("demo_sweep.jsonl", "sweep")):
+        path = FOLDER / name
+        part = [m for m in missions if m.kind == kind]
+        path.write_text("", encoding="utf-8")
+        bus.append_jsonl(path, part)
+        print(f"wrote {len(part)} to {path.relative_to(REPO_ROOT)}")
     return 0
 
 

@@ -171,11 +171,14 @@ def test_skipped_bays_are_requeued():
 # --- fixture for the Vision robot bridge -----------------------------------------------------
 
 
-@pytest.mark.parametrize("path", sorted(MISSIONS.glob("*.jsonl")), ids=lambda p: p.name)
-def test_missions_fixture(path):
-    ms = bus.read_jsonl(path, Mission)
-    assert ms and {m.kind for m in ms} == {"sweep", "mission"}
-    for m in ms:
+def test_missions_fixtures():
+    missions = bus.read_jsonl(MISSIONS / "demo_missions.jsonl", Mission)
+    sweeps = bus.read_jsonl(MISSIONS / "demo_sweep.jsonl", Mission)
+    assert missions and {m.kind for m in missions} == {"mission"}  # fast: no full sweep in it
+    assert [(m.kind, m.bays) for m in sweeps] == [("sweep", [])]
+    ids = [m.mission_id for m in sweeps + missions]
+    assert len(ids) == len(set(ids))
+    for m in missions:
         if m.kind == "mission":
             assert 1 <= len(m.bays) <= ROBOT.missions.max_bays
             assert m.bays == route.order(m.bays, SMAP)  # planner order

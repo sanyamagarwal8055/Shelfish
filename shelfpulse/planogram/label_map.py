@@ -4,9 +4,11 @@ Robot readings carry, per row, the price labels on the shelf edge: {x_cm, sku, p
 label owns the shelf from its x to the next label's x (the last one to the bay edge); a first
 label within `snap_start_cm` of the left edge owns from 0. Facings = floor(width / pack width)
 from sku_master, min_facings = ceil(facings x min_facings_frac). A row with no labels in a
-reading keeps what was known. The result is a contract Planogram with source "label_map",
-written as <dir>/<bay_id>.json for the Vision track to use as a location hint, and used by the
-matcher for bays that have no digital planogram.
+reading keeps what was known, and so does a row read with fewer labels than known when every
+label read matches a known one (same SKU, start within drift_tol_cm): OCR missed a tag, the
+products didn't change. A new or moved label still updates the row. The result is a contract
+Planogram with source "label_map", written as <dir>/<bay_id>.json for the Vision track to use
+as a location hint, and used by the matcher for bays that have no digital planogram.
 
 Drift: where both exist, a label map row that disagrees with the digital planogram (a slot whose
 SKU differs, or whose edges moved by more than drift_tol_cm) is reported once it has persisted
@@ -127,13 +129,22 @@ class LabelMaps:
         while len(rows) <= max(new_rows):
             rows.append([])
         for r, slots in new_rows.items():
-            rows[r] = slots
+            if not self._missed_tags(rows[r], slots):
+                rows[r] = slots
         plan = Planogram(bay_id=reading.bay_id, source="label_map", updated=reading.t, rows=rows)
         if old is not None and old.rows == plan.rows:
             self.maps[reading.bay_id] = plan  # same layout, newer timestamp
             return None
         self.maps[reading.bay_id] = plan
         return plan
+
+    def _missed_tags(self, known: list[PlanogramSlot], seen: list[PlanogramSlot]) -> bool:
+        """Fewer labels than known, all of them known ones: unread tags, not a new layout."""
+        tol = self.cfg.drift_tol_cm
+        return len(seen) < len(known) and all(
+            any(k.sku_id == s.sku_id and abs(k.x_start_cm - s.x_start_cm) <= tol for k in known)
+            for s in seen
+        )
 
     def drift(self, digital: Planogram, t: datetime) -> list[Drift]:
         """Disagreements with the digital planogram that just reached drift_days."""

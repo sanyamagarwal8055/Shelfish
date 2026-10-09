@@ -157,3 +157,19 @@ def test_brain_reports_persistent_drift(tmp_path):
         ("DAL_1KG", "TEA_250G"),
         (None, "TEA_250G"),
     }
+
+
+def test_a_missed_tag_keeps_the_known_row():
+    lm = LabelMaps(SKUS, CFG.label_map)
+    three = [(0.4, "SUGAR_1KG"), (40.5, "SHAMPOO_180ML"), (80.4, "OATS_1KG")]
+    lm.update(robot("G9-E-F", {1: three}))
+    # OCR misses the shampoo tag: sugar must not stretch over the shampoo slot
+    assert lm.update(robot("G9-E-F", {1: [three[0], three[2]]}, T0 + timedelta(hours=8))) is None
+    assert [s.sku_id for s in lm.maps["G9-E-F"].rows[1]] == [
+        "SUGAR_1KG",
+        "SHAMPOO_180ML",
+        "OATS_1KG",
+    ]
+    # a genuinely new label still updates the row
+    changed = lm.update(robot("G9-E-F", {1: [three[0], (60.0, "TEA_250G")]}, T0 + timedelta(1)))
+    assert [s.sku_id for s in changed.rows[1]] == ["SUGAR_1KG", "TEA_250G"]
