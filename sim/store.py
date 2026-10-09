@@ -100,6 +100,7 @@ class SimStore:
     quality: dict[str, Window] = field(default_factory=dict)
     misreads: dict[tuple[str, str, int, int], Window] = field(default_factory=dict)
     ambiguous: dict[str, Window] = field(default_factory=dict)
+    unidentified: dict[str, Window] = field(default_factory=dict)
 
     @classmethod
     def build(cls, sc: Scenario, skus: dict[str, SkuRow], plans: dict[str, Planogram],
@@ -186,6 +187,8 @@ class SimStore:
             self.misreads[(ev.source, ev.bay, ev.row, ev.position)] = Window(until, ev.units)
         elif ev.do == "ambiguous":
             self.ambiguous[ev.sku] = Window(until, ev.candidates)
+        elif ev.do == "unidentified":
+            self.unidentified[ev.sku] = Window(until, None)
         elif ev.do == "set_system":
             self.system[ev.sku] = ev.qty
             self.snapshot(t, ev.sku)
@@ -246,6 +249,9 @@ class SimStore:
         amb = self.ambiguous.get(sku)
         if amb and t < amb.until:
             name, c = "AMBIGUOUS:" + "|".join(amb.data), ambiguous_conf
+        unk = self.unidentified.get(sku)
+        if unk and t < unk.until:
+            name, c = "UNKNOWN", ambiguous_conf
         return Pack(sku=name, conf=c, x_cm=round(x, 2), w_cm=row.width_cm, h_cm=row.height_cm,
                     stack=1, depth_left=depth if self.sc.depth_known else None)  # fmt: skip
 

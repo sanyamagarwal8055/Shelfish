@@ -17,7 +17,7 @@ import pytest
 from shelfpulse import bus
 from shelfpulse.brain import load_brain_config, run
 from shelfpulse.contracts import BayReading, check_skus, reading_skus
-from shelfpulse.decision.types import Event, StrayItem
+from shelfpulse.decision.types import Event, StrayItem, Task
 from sim.run import simulate
 from sim.scenario import load_scenario, scenario_names
 from sim.store import spread
@@ -34,6 +34,9 @@ class Result:
         self.readings = bus.read_jsonl(out / "bay_readings.jsonl", BayReading)
         self.events = bus.read_jsonl(out / "events.jsonl", Event)
         self.strays = bus.read_jsonl(out / "strays.jsonl", StrayItem)
+        log = bus.read_jsonl(out / "tasks.jsonl", Task)
+        self.task_log = log
+        self.tasks = list({t.id: t for t in log}.values())  # final state of each task
         with open(out / "pos.csv", encoding="utf-8") as f:
             self.pos = list(csv.DictReader(f))
         with open(out / "inventory.csv", encoding="utf-8") as f:
@@ -198,3 +201,64 @@ def test_bad_events_rejected(tmp_path, bad):
     path.write_text(yaml.safe_dump(sc))
     with pytest.raises(ValueError):
         simulate(load_scenario(path), tmp_path / "out")
+
+
+# --- tasks (decision layer) ----------------------------------------------------------------
+
+
+def summary(r: Result) -> list[tuple]:
+    return [(t.action, t.sku_id, t.bay, t.status, t.priority) for t in r.tasks]
+
+
+def test_restock_simple_task(sim):
+    r = sim("restock_simple")
+    (t,) = r.tasks
+    assert (t.action, t.priority, t.cause, t.status) == ("RESTOCK", "P1", "REPLENISHMENT_GAP",
+                                                         "VERIFIED")  # fmt: skip
+    assert t.qty == 84 and t.time_to_restore_min == 31.0
+
+
+def test_true_stockout_task(sim):
+    assert summary(sim("true_stockout")) == [("REORDER", "ATTA_5KG", "G1-L-05", "OPEN", "P1")]
+
+
+def test_phantom_stock_task(sim):
+    (t,) = sim("phantom_stock").tasks
+    assert (t.action, t.qty, t.assignee) == ("CYCLE_COUNT", 18, "manager")
+
+
+def test_sweep_theft_tasks(sim):
+    r = sim("sweep_theft")
+    assert [(t.action, t.assignee) for t in r.tasks] == [
+        ("LOSS_PREVENTION", "loss_prevention"),  # decided before the restock
+        ("RESTOCK", "staff"),
+    ]
+    assert r.tasks[0].qty == 8 and r.tasks[0].priority == "P1"
+
+
+def test_misplaced_task(sim):
+    (t,) = sim("misplaced").tasks
+    assert (t.action, t.sku_id, t.bay, t.seen_bay, t.status) == (
+        "RETURN", "SHAMPOO_180ML", "G7-R-02", "G1-L-04", "VERIFIED",
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize("name", ["noisy_frame", "ambiguous", "peak_hours"])
+def test_no_tasks(sim, name):
+    assert sim(name).tasks == []
+
+
+def test_unidentified_packs_read_as_unknown(tmp_path):
+    import yaml
+
+    sc = yaml.safe_load((ROOT / "sim/scenarios/noisy_frame.yaml").read_text())
+    sc["events"] = [{"at": "10:05", "do": "unidentified", "sku": "RICE_1KG", "until": "10:10"}]
+    path = tmp_path / "unk.yaml"
+    path.write_text(yaml.safe_dump(sc))
+    simulate(load_scenario(path), tmp_path / "out")
+    rows = [
+        r.rows[2]
+        for r in bus.read_jsonl(tmp_path / "out/bay_readings.jsonl", BayReading)
+        if r.t.minute in (5, 9)
+    ]
+    assert rows and all({p.sku for p in row.packs} == {"UNKNOWN"} for row in rows)
