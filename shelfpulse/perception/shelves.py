@@ -69,25 +69,15 @@ def find_rails(img: np.ndarray, px_per_cm: float, s: ShelfSettings = DEFAULT_SHE
     if not edges or edges[-1] < h - 2:
         edges.append(h - 1)
 
+    # Every edge pair 1.5-4.5 cm apart with no full-width edge between them is a candidate rail.
+    # Candidates may overlap (a pack's dark bottom edge sits just above the real rail);
+    # find_shelves keeps the one nearest each row's expected height.
     lo, hi = (round(c * px_per_cm) for c in s.rail_band_cm)
-    rails: list[Rail] = []
-    i = 0
-    while i < len(edges) - 1:
-        a = edges[i]
-        pair = None
-        for b in edges[i + 1 :]:
-            if b - a > hi:
-                break
-            inner = cover[a + 3 : b - 2]
-            if b - a >= lo and (inner.size == 0 or inner.mean() < 0.2):
-                pair = b
-                break
-        if pair is None:
-            i += 1
-            continue
-        rails.append(Rail(a, pair, float(cover[max(a - 1, 0) : a + 2].max())))
-        i = edges.index(pair) + 1
-    return rails
+    return [
+        Rail(a, b, float(cover[max(a - 1, 0) : a + 2].max()))
+        for a, b in zip(edges, edges[1:], strict=False)  # neighbours: nothing strong in between
+        if lo <= b - a <= hi
+    ]
 
 
 def _occluded(img: np.ndarray, rail: Rail, px_per_cm: float, s: ShelfSettings) -> list:

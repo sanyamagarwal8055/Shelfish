@@ -141,3 +141,17 @@ def test_cli(tmp_path):
     assert main(["--n", "2", "--seed", "1", "--out", str(tmp_path), "--bays", "G3-L-05"]) == 0
     assert {t.bay_id for t in _truth(tmp_path)} == {"G3-L-05"}
     assert main(["--n", "1", "--out", str(tmp_path), "--bays", "G9-L-01"]) == 1
+
+
+@pytest.mark.uses_gallery
+def test_gallery_photos_are_pasted(tmp_path):
+    gallery = tmp_path / "gallery" / "SOAP_100G"
+    gallery.mkdir(parents=True)
+    photo = np.zeros((60, 90, 3), np.uint8)
+    photo[:, :, 1] = 255  # pure green, unlike any drawn SKU colour or the background
+    cv2.imwrite(str(gallery / "a.jpg"), photo)
+    truths = make(tmp_path / "out", n=1, seed=1, bays=["G7-R-02"], gallery=tmp_path / "gallery")
+    img = cv2.imread(str(tmp_path / "out" / truths[0].frame_ref))
+    soap = next(p for r in truths[0].rows for p in r.packs if p.sku == "SOAP_100G")
+    b, g, r = _px(img, 0, soap.x_cm + soap.w_cm / 2, up_cm=3.0)
+    assert g > 200 and b < 60 and r < 60

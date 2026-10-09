@@ -38,3 +38,19 @@ detector:
 
 quality:
   sharp_ref_var: 100 # Laplacian variance of a sharp bay image
+
+# Which product is each pack (step 5): gallery search re-ranked by location + size.
+identify:
+  backend: dinov2 # dinov2 | clip
+  model: null # null = the backend's default (facebook/dinov2-small, openai/clip-vit-base-patch32)
+  input_px: 224 # crop size fed to the model; smaller is faster, less accurate
+  gallery: data/gallery
+  index_dir: runs/gallery_index # built by scripts/build_gallery_index.py (git-ignored)
+  # Planogram / label-map JSON read as a location hint; first folder with <bay_id>.json wins.
+  planogram_dirs: [data/planograms, data/label_maps, contracts/fixtures/demo_store/planograms]
+  top_k: 5
+  unknown_below: 0.5 # best cosine similarity below this -> UNKNOWN
+  ambiguous_margin: 0.02 # top two scores closer than this -> AMBIGUOUS:a|b
+  location_bonus: 0.05 # added when the SKU is the one planned at that x
+  size_bonus: 0.05 # times size_match (pack width vs sku_master)
+  size_tol: 0.25

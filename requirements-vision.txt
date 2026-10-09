@@ -5,3 +5,5 @@
 torch>=2.2  # CPU build; train on Colab/Kaggle GPU, not here
 torchvision>=0.17
 ultralytics>=8.2  # YOLO + ready-made SKU-110K dataset config
+transformers>=4.40  # DINOv2 / CLIP pack embeddings (step 5)
+faiss-cpu>=1.8  # nearest-neighbour search over the gallery
