@@ -51,6 +51,12 @@ planner: # robot planner: which bays get a second look, and when
   sweep_duration_min: 60 # the robot is busy this long after a sweep starts
   bay_scan_s: 4 # time to film one bay on a mission (1.2 m at 0.3 m/s)
 
+label_map: # planograms rebuilt from the shelf labels the robot reads
+  snap_start_cm: 5 # a first label this close to the left edge owns the shelf from 0
+  min_facings_frac: 0.25 # min_facings = ceil(facings x this)
+  drift_tol_cm: 10 # slot edges moved more than this vs the digital planogram = drift
+  drift_days: 3 # report a difference only once it has lasted this long
+
 sim: # store simulator (sim/): how the fake Vision track reports
   camera_interval_s: 60 # locked design: 1 frame per minute
   camera_quality: 0.92

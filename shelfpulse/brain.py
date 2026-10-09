@@ -14,6 +14,11 @@ The robot planner queues bays for a second look (camera blocked 15+ min, camera/
 conflict, AMBIGUOUS packs, a sales estimate to verify, a restock on a robot-only bay) and sends
 sweeps and missions on the reading clock into missions.jsonl. A robot_status.jsonl next to the
 readings, if present, is read too (skipped bays are re-queued).
+
+Shelf labels on robot readings rebuild each bay's label map, written to --label-maps (default
+<out>/label_maps/; the store's shared folder is data/label_maps/). A bay with no digital
+planogram is matched against its label map; where both exist, persistent differences go to
+label_drift.jsonl.
 """
 
 from __future__ import annotations
@@ -48,6 +53,8 @@ from shelfpulse.decision.store_data import StoreData
 from shelfpulse.decision.tasks import SLOT_KINDS, Plan, TaskBook, plans_for_slot
 from shelfpulse.decision.types import Event, SlotObservation, StrayItem, Task
 from shelfpulse.layout import store_map
+from shelfpulse.planogram import label_map
+from shelfpulse.planogram.label_map import Drift, LabelMapCfg, LabelMaps
 from shelfpulse.planogram.loader import PlanogramStore
 from shelfpulse.planogram.matcher import MatchResult, match
 from shelfpulse.robot_planner.mission_queue import MissionQueue, PlannerCfg
@@ -62,6 +69,7 @@ OUTPUT_FILES = (
     "events.jsonl",
     "tasks.jsonl",
     "missions.jsonl",
+    "label_drift.jsonl",
 )
 
 
@@ -115,6 +123,7 @@ class BrainConfig(_Cfg):
     priority: PriorityCfg
     quantity: QuantityCfg
     planner: PlannerCfg
+    label_map: LabelMapCfg
     sim: SimCfg
 
 
@@ -144,6 +153,8 @@ class Summary:
     recheck: Counter[str] = field(default_factory=Counter)  # robot re-check requests by reason
     recheck_bays: dict[str, str] = field(default_factory=dict)  # at the end: still queued
     missions: Counter[str] = field(default_factory=Counter)  # sent, by kind
+    label_maps: set[str] = field(default_factory=set)  # bays whose label map was (re)built
+    drift: int = 0
     store_data: bool = False
 
 
@@ -154,6 +165,7 @@ class Output:
     events: list[Event] = field(default_factory=list)
     tasks: list[Task] = field(default_factory=list)
     missions: list[Mission] = field(default_factory=list)
+    drift: list[Drift] = field(default_factory=list)
 
 
 class Brain:
@@ -164,6 +176,7 @@ class Brain:
         planograms: PlanogramStore,
         store_data: StoreData | None = None,
         shelf_depth_cm: float = 45.0,
+        label_map_dir: Path | None = None,
     ):
         self.cfg = cfg
         self.skus = skus
@@ -183,6 +196,8 @@ class Brain:
         self.scheduler = Scheduler(self.robot, cfg.planner, cfg.missions.footfall_tx_per_10min_max,
                                    self.smap, self.queue, store_data)  # fmt: skip
         self._blocked_since: dict[str, datetime] = {}
+        self.label_maps = LabelMaps(skus, cfg.label_map)
+        self.label_map_dir = label_map_dir
         t = cfg.tracker
         self.tracker = SlotTracker(t.k, t.n, t.clear_after, t.robot_overrides)
         self._meta: dict[Hashable, tuple[int, int | None, str]] = {}  # key -> row, position, sku
@@ -213,10 +228,11 @@ class Brain:
             self.summary.untrusted += 1
             return Output()
         self.summary.trusted += 1
+        drift = self._read_labels(reading)
         plan = self.planograms.get(reading.bay_id)
         if plan is None:
             self.summary.no_planogram.add(reading.bay_id)
-            return Output()
+            return Output(drift=drift)
         m = match(plan, reading)
         slots, votes = self._fuse(reading, m.slots)
         self.summary.slot_status.update(o.status for o in slots)
@@ -234,7 +250,28 @@ class Brain:
             any(s.kind == "AMBIGUOUS" for s in m.strays) or any(o.ambiguous for o in slots)
         ):
             self._queue(reading.bay_id, "ambiguous", reading.t)
-        return Output(observations=slots, strays=m.strays, events=events, tasks=tasks)
+        return Output(observations=slots, strays=m.strays, events=events, tasks=tasks,
+                      drift=drift)  # fmt: skip
+
+    # --- label maps --------------------------------------------------------------------------
+
+    def _read_labels(self, reading: BayReading) -> list[Drift]:
+        """Fold robot shelf labels into the label map; return drift that just became due."""
+        known = self.planograms.get(reading.bay_id)
+        if known is not None and known.source == "label_map":
+            self.label_maps.maps.setdefault(reading.bay_id, known)  # build on the saved map
+        changed = self.label_maps.update(reading)
+        if changed is not None:
+            self.summary.label_maps.add(reading.bay_id)
+            self.planograms.put_label_map(changed)
+            if self.label_map_dir is not None:
+                label_map.write(changed, self.label_map_dir)
+        digital = self.planograms.get(reading.bay_id)
+        if reading.source != "robot" or digital is None or digital.source == "label_map":
+            return []
+        drift = self.label_maps.drift(digital, reading.t)
+        self.summary.drift += len(drift)
+        return drift
 
     # --- robot planner triggers -------------------------------------------------------------
 
@@ -460,12 +497,18 @@ class Writer:
         bus.append_jsonl(self.paths["events.jsonl"], out.events)
         bus.append_jsonl(self.paths["tasks.jsonl"], out.tasks)
         bus.append_jsonl(self.paths["missions.jsonl"], out.missions)
+        bus.append_jsonl(self.paths["label_drift.jsonl"], out.drift)
 
 
-def make_brain(cfg: BrainConfig, sku_master: Path, store_data: StoreData | None) -> Brain:
+def make_brain(
+    cfg: BrainConfig,
+    sku_master: Path,
+    store_data: StoreData | None,
+    label_map_dir: Path | None = None,
+) -> Brain:
     depth = float(load_yaml("store_layout")["bay"]["depth_cm"])
     return Brain(cfg, load_sku_master(sku_master), PlanogramStore(cfg.planograms.dirs),
-                 store_data, depth)  # fmt: skip
+                 store_data, depth, label_map_dir)  # fmt: skip
 
 
 def finish(brain: Brain) -> Summary:
@@ -479,14 +522,17 @@ def run(
     cfg: BrainConfig,
     sku_master: Path,
     store_data_dir: Path | None | bool = True,
+    label_map_dir: Path | None = None,
 ) -> Summary:
     """store_data_dir: a folder with pos.csv + inventory.csv; True = the readings' folder;
-    None/False = no store data. A robot_status.jsonl beside the readings is fed in time order."""
+    None/False = no store data. A robot_status.jsonl beside the readings is fed in time order.
+    label_map_dir: where label maps are written (default <out_dir>/label_maps)."""
     readings = sorted(bus.read_jsonl(readings_path, BayReading), key=lambda r: r.t)
     status_path = readings_path.parent / "robot_status.jsonl"
     statuses = bus.read_jsonl(status_path, RobotStatus) if status_path.exists() else []
     folder = readings_path.parent if store_data_dir is True else (store_data_dir or None)
-    brain = make_brain(cfg, sku_master, load_store_data(folder))
+    brain = make_brain(cfg, sku_master, load_store_data(folder),
+                       label_map_dir or out_dir / "label_maps")  # fmt: skip
     writer = Writer(out_dir)
 
     feed = sorted([(r.t, 1, r) for r in readings] + [(s.t, 0, s) for s in statuses],
@@ -508,10 +554,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--store-data", type=Path, help="folder with pos.csv + inventory.csv "
                     "(default: the readings' folder)")  # fmt: skip
     ap.add_argument("--no-store-data", action="store_true", help="ignore POS / stock data")
+    ap.add_argument("--label-maps", type=Path, help="write label maps here (default "
+                    "<out>/label_maps; the store's shared one is data/label_maps)")  # fmt: skip
     args = ap.parse_args(argv)
 
     store = False if args.no_store_data else (args.store_data or True)
-    s = run(args.readings, args.out, load_brain_config(args.config), args.sku_master, store)
+    s = run(args.readings, args.out, load_brain_config(args.config), args.sku_master, store,
+            args.label_maps)  # fmt: skip
     print(f"{s.readings} readings: {s.trusted} trusted, {s.untrusted} below quality threshold")
     print(f"slots: {dict(sorted(s.slot_status.items()))}  strays: {dict(sorted(s.strays.items()))}")
     print(f"events: {dict(sorted(s.events.items()))}")
@@ -519,6 +568,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"robot re-checks queued: {dict(sorted(s.recheck.items()))}")
     if s.missions:
         print(f"robot missions sent: {dict(sorted(s.missions.items()))}")
+    if s.label_maps:
+        print(f"label maps built from robot labels: {sorted(s.label_maps)}"
+              + (f"; {s.drift} drift item(s)" if s.drift else ""))  # fmt: skip
     print(f"new tasks: {dict(sorted(s.tasks.items()))}"
           + ("" if s.store_data else "  (no POS/stock data: causes unknown)"))  # fmt: skip
     if s.no_planogram:

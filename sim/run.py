@@ -94,7 +94,7 @@ def _simulate(sc: Scenario, out: Path, cfg: BrainConfig, with_brain: bool):
         return st.reading(bay, source, t, q, cfg.sim.conf, cfg.sim.ambiguous_conf)
 
     out.mkdir(parents=True, exist_ok=True)
-    brain = make_brain(cfg, SKU_MASTER, st.data) if with_brain else None
+    brain = make_brain(cfg, SKU_MASTER, st.data, out / "label_maps") if with_brain else None
     writer = Writer(out) if with_brain else None
     readings: list[BayReading] = []
     statuses: list[RobotStatus] = []
