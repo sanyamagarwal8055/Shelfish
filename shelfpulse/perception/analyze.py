@@ -3,8 +3,8 @@
 The image must already be a front-on bay (rectify.py does that upstream). Steps:
 shelf rails -> rows + occlusion, detector -> pack boxes, boxes -> packs per row, gaps = row
 stretches wider than 5 cm with no packs, product names from the gallery index (identify.py;
-"UNKNOWN" for every pack if the index hasn't been built), quality score. depth_left stays null
-until depth (step 6).
+"UNKNOWN" for every pack if the index hasn't been built), depth_left from an aligned depth map
+when one is given (depth.py; null otherwise), quality score.
 """
 
 from __future__ import annotations
@@ -27,9 +27,11 @@ from shelfpulse.contracts import (
     Gap,
     Pack,
     Row,
+    SkuRow,
     Source,
     load_sku_master,
 )
+from shelfpulse.perception import depth as depth_mod
 from shelfpulse.perception import quality
 from shelfpulse.perception.detector import Box, ClassicSettings, Detector
 from shelfpulse.perception.identify import Identifier, IdentifySettings, PlanHints
@@ -43,6 +45,8 @@ class Pipeline:
     row_tolerance_cm: float = 8.0
     sharp_ref_var: float = 100.0
     identifier: Identifier | None = None  # None: every pack stays UNKNOWN
+    depth: depth_mod.DepthSettings = depth_mod.DepthSettings()
+    skus: dict[str, SkuRow] | None = None  # pack depths for depth_left
 
 
 def load_pipeline(
@@ -63,6 +67,8 @@ def load_pipeline(
         min_cover=sh["min_cover"],
         occlusion_tol=sh["occlusion_tol"],
         min_occlusion_cm=sh["min_occlusion_cm"],
+        depth_margin_mm=sh["depth_margin_mm"],
+        depth_cover=sh["depth_cover"],
     )
     d = cfg["detector"]
     c = d["classic"]
@@ -74,11 +80,46 @@ def load_pipeline(
         edge_cover=c["edge_cover"],
         conf=c["conf"],
     )
-    detector = Detector(backend or d["backend"], d["weights"], d["conf"], d["imgsz"], classic)
-    identifier = load_identifier(name) if identify else None
-    return Pipeline(
-        shelves, detector, d["row_tolerance_cm"], cfg["quality"]["sharp_ref_var"], identifier
+    detector = Detector(
+        _backend(backend or d["backend"], d["weights"]),
+        d["weights"],
+        d["conf"],
+        d["imgsz"],
+        classic,
+        per_row=d["per_row"],
+        row_margin_cm=d["row_margin_cm"],
     )
+    identifier = load_identifier(name) if identify else None
+    dc = cfg["depth"]
+    depth = depth_mod.DepthSettings(
+        shelf_depth_cm=float(bay["depth_cm"]),
+        mm_per_unit=dc["mm_per_unit"],
+        round_tol=dc["round_tol"],
+        min_valid_frac=dc["min_valid_frac"],
+    )
+    return Pipeline(
+        shelves,
+        detector,
+        d["row_tolerance_cm"],
+        cfg["quality"]["sharp_ref_var"],
+        identifier,
+        depth,
+        load_sku_master(),
+    )
+
+
+def _backend(backend: str, weights: str) -> str:
+    """'auto': YOLO when its weights file exists, else the classic baseline (with a note)."""
+    if backend != "auto":
+        return backend
+    path = Path(weights) if Path(weights).is_absolute() else REPO_ROOT / weights
+    if path.is_file():
+        return "yolo"
+    print(
+        f"note: no YOLO weights at {path}; using the classic detector (synthetic shelves only)",
+        file=sys.stderr,
+    )
+    return "classic"
 
 
 def load_identifier(name: str = "perception") -> Identifier | None:
@@ -142,6 +183,7 @@ def free_stretches(taken: list[tuple[float, float]]) -> list[tuple[float, float]
 
 
 Namer = Callable[[Box, int, float, float], tuple[str, float]]  # (box, row, x_cm, w_cm) -> sku, conf
+Depther = Callable[[Box, Shelf, str], "int | None"]  # (box, shelf, sku) -> depth_left
 
 
 def build_rows(
@@ -150,6 +192,7 @@ def build_rows(
     px_per_cm: float,
     row_tolerance_cm: float = 8.0,
     namer: Namer | None = None,
+    depther: Depther | None = None,
 ) -> list[Row]:
     """Assign each box to the shelf it stands on, name it, then derive gaps per row."""
     tol = row_tolerance_cm * px_per_cm
@@ -172,7 +215,8 @@ def build_rows(
             if any(_overlap(x0, x1, a, z) > (x1 - x0) / 2 for a, z in s.occluded):
                 continue
             sku, conf = namer(b, s.row, x0, x1 - x0) if namer else (UNKNOWN_SKU, b.conf)
-            packs.append((x0, x1, h, conf, sku))
+            left = depther(b, s, sku) if depther else None
+            packs.append((x0, x1, h, conf, sku, left))
         taken = [(x0, x1) for x0, x1, *_ in packs] + list(s.occluded)
         stretches = [(round(a, 2), round(b, 2)) for a, b in free_stretches(taken)]
         rows.append(
@@ -187,9 +231,9 @@ def build_rows(
                         w_cm=round(x1 - x0, 2),
                         h_cm=round(h, 2),
                         stack=1,
-                        depth_left=None,
+                        depth_left=left,
                     )
-                    for x0, x1, h, conf, sku in packs
+                    for x0, x1, h, conf, sku, left in packs
                 ],
                 gaps=[
                     Gap(x_cm=a, w_cm=round(b - a, 2))
@@ -208,18 +252,24 @@ def analyze(
     t: datetime,
     frame_ref: str = "",
     pipeline: Pipeline | None = None,
+    depth_map: np.ndarray | None = None,
 ) -> BayReading:
     """Read one front-on bay image (H x W x 3, BGR) into a BayReading.
 
-    `t` must be timezone-aware. Raises pydantic.ValidationError if the result breaks the contract.
+    `depth_map` (H x W, distance from the camera, 0 = no reading) is aligned with the image;
+    without it depth_left is null. `t` must be timezone-aware. Raises pydantic.ValidationError
+    if the result breaks the contract.
     """
     if bay_image.ndim != 3 or bay_image.shape[1] == 0:
         raise ValueError(f"bay_image must be H x W x 3, got shape {bay_image.shape}")
+    if depth_map is not None and depth_map.shape[:2] != bay_image.shape[:2]:
+        raise ValueError(f"depth_map {depth_map.shape} not aligned with image {bay_image.shape}")
     p = pipeline or default_pipeline()
     px_per_cm = bay_image.shape[1] / BAY_WIDTH_CM
-    shelves = find_shelves(bay_image, px_per_cm, p.shelves)
+    shelves = find_shelves(bay_image, px_per_cm, p.shelves, depth_map)
     boxes = p.detector.detect(bay_image, shelves, px_per_cm)
     namer = _namer(p.identifier, bay_image, boxes, bay_id) if p.identifier and boxes else None
+    depther = _depther(depth_map, p) if depth_map is not None else None
     return BayReading(
         bay_id=bay_id,
         source=source,
@@ -227,8 +277,19 @@ def analyze(
         frame_ref=frame_ref,
         quality=quality.score(bay_image, shelves, p.sharp_ref_var),
         px_per_cm=px_per_cm,
-        rows=build_rows(shelves, boxes, px_per_cm, p.row_tolerance_cm, namer),
+        rows=build_rows(shelves, boxes, px_per_cm, p.row_tolerance_cm, namer, depther),
     )
+
+
+def _depther(depth_map: np.ndarray, p: Pipeline) -> Depther:
+    skus = p.skus or {}
+
+    def left(b: Box, shelf: Shelf, sku: str) -> int | None:
+        box = (int(b.x0), int(b.y0), int(round(b.x1)), int(round(b.y1)))
+        recess = depth_mod.recess_cm(depth_map, box, shelf.rail, p.depth)
+        return depth_mod.depth_left(recess, depth_mod.pack_depth_cm(sku, skus), p.depth)
+
+    return left
 
 
 def _namer(ident: Identifier, img: np.ndarray, boxes: list[Box], bay_id: str) -> Namer:

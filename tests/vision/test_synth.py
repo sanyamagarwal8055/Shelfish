@@ -140,7 +140,9 @@ def test_distort_changes_image_not_truth(tmp_path):
 def test_cli(tmp_path):
     assert main(["--n", "2", "--seed", "1", "--out", str(tmp_path), "--bays", "G3-L-05"]) == 0
     assert {t.bay_id for t in _truth(tmp_path)} == {"G3-L-05"}
-    assert main(["--n", "1", "--out", str(tmp_path), "--bays", "G9-L-01"]) == 1
+    assert main(["--n", "1", "--out", str(tmp_path), "--bays", "G9-E-F"]) == 0  # random planogram
+    assert {t.bay_id for t in _truth(tmp_path)} == {"G9-E-F"}
+    assert main(["--n", "1", "--out", str(tmp_path), "--bays", "G99-L-01"]) == 1
 
 
 @pytest.mark.uses_gallery

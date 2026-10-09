@@ -1,0 +1,1 @@
+{"contract_version": "1.0", "mission_id": "M-0007", "kind": "mission", "created_at": "2026-10-08T11:35:00+05:30", "bays": ["G3-L-05", "G7-R-02", "G9-E-F"], "reasons": {"G3-L-05": "blocked", "G7-R-02": "verify", "G9-E-F": "promo"}, "speed_mps": 0.3}

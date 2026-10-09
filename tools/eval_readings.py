@@ -3,12 +3,18 @@
     python tools/eval_readings.py --pred runs/p01/bay_readings.jsonl --gold runs/synth01/truth.jsonl
 
 Readings are paired by the file name in frame_ref, so a prediction made from
-runs/synth01/images/0003_G1-L-04.jpg matches the truth line for images/0003_G1-L-04.jpg.
+runs/synth01/images/0003_G1-L-04.jpg matches the truth line for images/0003_G1-L-04.jpg;
+--by-bay pairs by bay_id instead (one reading per bay, e.g. a robot pass vs its truth.jsonl).
 A gold reading with no prediction scores as an empty prediction.
 
 - facing-count error: mean |pred packs - gold packs| over every gold row.
 - SKU accuracy: gold packs whose x-matched prediction (same row, x-IoU >= 0.5) has the same sku.
 - gap recall: gold gaps covered by a predicted gap with x-IoU >= 0.5.
+- depth_left: over x-matched packs whose gold depth_left is known: share exactly right (a null
+  prediction counts as wrong) and mean absolute error over the non-null ones. Shown only when
+  the gold has depth.
+- labels (robot readings): gold labels found in the same row with the same sku within 3 cm of x
+  (recall), share of predicted labels that match one (precision), and matched prices exact.
 """
 
 from __future__ import annotations
@@ -34,6 +40,14 @@ class Score:
     sku_correct: int = 0
     gaps: int = 0
     gaps_found: int = 0
+    depth_n: int = 0  # matched packs with a gold depth_left
+    depth_exact: int = 0
+    depth_read: int = 0  # ... where the prediction has a depth_left
+    depth_abs_err: int = 0
+    labels: int = 0  # gold labels
+    labels_pred: int = 0
+    labels_found: int = 0
+    labels_price_ok: int = 0
 
     def add(self, other: Score) -> None:
         for k in vars(self):
@@ -50,6 +64,14 @@ class Score:
     @property
     def gap_recall(self) -> float | None:
         return self.gaps_found / self.gaps if self.gaps else None
+
+    @property
+    def depth_acc(self) -> float | None:
+        return self.depth_exact / self.depth_n if self.depth_n else None
+
+    @property
+    def depth_mae(self) -> float | None:
+        return self.depth_abs_err / self.depth_read if self.depth_read else None
 
 
 @dataclass
@@ -102,6 +124,27 @@ def score_bay(pred: BayReading | None, gold: BayReading) -> Score:
             for k, pi in zip(g.packs, m, strict=True)
             if pi is not None and p_packs[pi].sku == k.sku
         )
+        for k, pi in zip(g.packs, m, strict=True):
+            if pi is None or k.depth_left is None:
+                continue
+            s.depth_n += 1
+            got = p_packs[pi].depth_left
+            if got is not None:
+                s.depth_read += 1
+                s.depth_abs_err += abs(got - k.depth_left)
+                s.depth_exact += got == k.depth_left
+
+        p_labels = list(p.labels) if p else []
+        s.labels += len(g.labels)
+        s.labels_pred += len(p_labels)
+        for gl in g.labels:
+            hit = next(
+                (pl for pl in p_labels if pl.sku == gl.sku and abs(pl.x_cm - gl.x_cm) <= 3), None
+            )
+            if hit is not None:
+                p_labels.remove(hit)
+                s.labels_found += 1
+                s.labels_price_ok += abs(hit.price - gl.price) < 0.005
 
         m = match(
             [(k.x_cm, k.x_cm + k.w_cm) for k in g.gaps], [(k.x_cm, k.x_cm + k.w_cm) for k in p_gaps]
@@ -120,11 +163,12 @@ def load(path: Path) -> list[BayReading]:
         return [parse_bay_reading(json.loads(s)) for s in f if s.strip()]
 
 
-def evaluate(pred: list[BayReading], gold: list[BayReading]) -> Report:
-    by_frame = {frame_key(r.frame_ref): r for r in pred}
+def evaluate(pred: list[BayReading], gold: list[BayReading], by_bay: bool = False) -> Report:
+    key_of = (lambda r: r.bay_id) if by_bay else (lambda r: frame_key(r.frame_ref))
+    by_frame = {key_of(r): r for r in pred}
     rep = Report()
     for g in gold:
-        key = frame_key(g.frame_ref)
+        key = key_of(g)
         p = by_frame.get(key)
         if p is None:
             rep.missing.append(key)
@@ -154,6 +198,19 @@ def format_report(rep: Report, per_bay: bool = True) -> str:
     lines.append(f"  facing-count error  {o.facing_err:.2f} packs per row")
     lines.append(f"  SKU accuracy        {_pct(o.sku_acc, o.sku_correct, o.packs).strip()}")
     lines.append(f"  gap recall          {_pct(o.gap_recall, o.gaps_found, o.gaps).strip()}")
+    if o.labels:
+        prec = o.labels_found / o.labels_pred if o.labels_pred else 0.0
+        lines.append(
+            "  labels found        "
+            f"{_pct(o.labels_found / o.labels, o.labels_found, o.labels).strip()}"
+            f"  (precision {prec:.1%}, prices exact {o.labels_price_ok}/{o.labels_found})"
+        )
+    if o.depth_n:
+        mae = "n/a" if o.depth_mae is None else f"{o.depth_mae:.2f}"
+        lines.append(
+            f"  depth_left exact    {_pct(o.depth_acc, o.depth_exact, o.depth_n).strip()}"
+            f"  (mean abs error {mae} packs over {o.depth_read} read)"
+        )
     return "\n".join(lines)
 
 
@@ -162,8 +219,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--pred", type=Path, required=True)
     ap.add_argument("--gold", type=Path, required=True)
     ap.add_argument("--summary", action="store_true", help="overall numbers only")
+    ap.add_argument("--by-bay", action="store_true", help="pair readings by bay_id")
     args = ap.parse_args(argv)
-    rep = evaluate(load(args.pred), load(args.gold))
+    rep = evaluate(load(args.pred), load(args.gold), args.by_bay)
     print(format_report(rep, per_bay=not args.summary))
     return 0
 

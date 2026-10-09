@@ -5,8 +5,10 @@ image. Each rail's top edge is a shelf surface; the row is the strip above it, u
 Row numbers come from height above the bay bottom (row r sits at r * pitch), so one missed rail
 doesn't renumber the rows above it.
 
-Anything standing in front of a rail (a person, a trolley) breaks its colour: those columns are
-the row's occluded x ranges.
+Occluded x ranges (a person, a trolley in front of the shelf): with an aligned depth map, columns
+of the row where enough pixels sit closer than the shelf edge (the rail's depth); without one,
+columns where something breaks the rail's colour. Depth is preferred: shelf-edge price labels
+change the rail's colour too, but not its depth.
 """
 
 from __future__ import annotations
@@ -28,6 +30,8 @@ class ShelfSettings:
     min_cover: float = 0.4  # fraction of columns an edge must span
     occlusion_tol: float = 45.0  # colour distance from the rail's own colour
     min_occlusion_cm: float = 5.0
+    depth_margin_mm: float = 50.0  # closer than the shelf edge by this much = in front of it
+    depth_cover: float = 0.05  # share of a column's row pixels in front of the edge to count
 
 
 DEFAULT_SHELVES = ShelfSettings()
@@ -87,20 +91,57 @@ def _occluded(img: np.ndarray, rail: Rail, px_per_cm: float, s: ShelfSettings) -
     col = np.median(band, axis=0)  # one colour per column
     ref = np.median(col, axis=0)
     off = np.abs(col - ref).max(1) > s.occlusion_tol
+    return _ranges(off, px_per_cm, s.min_occlusion_cm)
+
+
+def _ranges(mask: np.ndarray, px_per_cm: float, min_cm: float) -> list[tuple[float, float]]:
+    """Column mask -> x ranges in cm at least min_cm wide."""
     out = []
-    idx = np.flatnonzero(off)
+    idx = np.flatnonzero(mask)
     if idx.size:
         for run in np.split(idx, np.flatnonzero(np.diff(idx) > 1) + 1):
             a, b = run[0] / px_per_cm, (run[-1] + 1) / px_per_cm
-            if b - a >= s.min_occlusion_cm:
+            if b - a >= min_cm:
                 out.append((round(float(a), 1), round(float(b), 1)))
     return out
 
 
+EDGE_CLUSTER = 30.0  # depth units (mm): readings this close to the far end are the rail itself
+
+
+def shelf_edge_depth(depth: np.ndarray, rail: Rail) -> float | None:
+    """Distance to the shelf edge along a rail (None if no readings).
+
+    People and trolleys only ever stand in front of a rail, never behind it, and may hide most
+    of it; so the edge is the far end of the rail band's readings (90th percentile), refined to
+    the median of readings within EDGE_CLUSTER of it. Works while >= ~10% of the rail shows.
+    """
+    band = depth[rail.y0 + 1 : max(rail.y1 - 1, rail.y0 + 2)]
+    vals = band[band > 0].astype(np.float32)
+    if not vals.size:
+        return None
+    far = float(np.percentile(vals, 90))
+    return float(np.median(vals[np.abs(vals - far) <= EDGE_CLUSTER]))
+
+
+def _occluded_depth(
+    depth: np.ndarray, top: int, rail: Rail, px_per_cm: float, s: ShelfSettings
+) -> list[tuple[float, float]]:
+    edge = shelf_edge_depth(depth, rail)
+    if edge is None:
+        return []
+    region = depth[top : rail.y1].astype(np.float32)
+    front = (region > 0) & (region < edge - s.depth_margin_mm)
+    return _ranges(front.mean(0) >= s.depth_cover, px_per_cm, s.min_occlusion_cm)
+
+
 def find_shelves(
-    img: np.ndarray, px_per_cm: float, s: ShelfSettings = DEFAULT_SHELVES
+    img: np.ndarray,
+    px_per_cm: float,
+    s: ShelfSettings = DEFAULT_SHELVES,
+    depth: np.ndarray | None = None,
 ) -> list[Shelf]:
-    """One Shelf per detected row, bottom row first."""
+    """One Shelf per detected row, bottom row first. `depth`: aligned depth map (optional)."""
     h = img.shape[0]
     rails = sorted(find_rails(img, px_per_cm, s), key=lambda r: r.y0, reverse=True)
     # A row of short, aligned packs can look like a rail too; per row keep the candidate nearest
@@ -119,6 +160,9 @@ def find_shelves(
         rail = by_row[r][1]
         above = [x for x in chosen if x.y1 <= rail.y0]
         top = max((x.y1 for x in above), default=0)
-        occ = _occluded(img, rail, px_per_cm, s)
+        if depth is not None:
+            occ = _occluded_depth(depth, top, rail, px_per_cm, s)
+        else:
+            occ = _occluded(img, rail, px_per_cm, s)
         shelves.append(Shelf(r, top, rail.y0, rail, occ))
     return shelves

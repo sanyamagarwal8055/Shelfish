@@ -7,3 +7,4 @@ torchvision>=0.17
 ultralytics>=8.2  # YOLO + ready-made SKU-110K dataset config
 transformers>=4.40  # DINOv2 / CLIP pack embeddings (step 5)
 faiss-cpu>=1.8  # nearest-neighbour search over the gallery
+rapidocr-onnxruntime>=1.3  # shelf-edge label OCR on robot images (step 7)
