@@ -17,7 +17,7 @@ import pytest
 from shelfpulse import bus
 from shelfpulse.brain import load_brain_config, run
 from shelfpulse.contracts import BayReading, check_skus, reading_skus
-from shelfpulse.decision.types import Event, StrayItem, Task
+from shelfpulse.decision.types import Event, SlotObservation, StrayItem, Task
 from sim.run import simulate
 from sim.scenario import load_scenario, scenario_names
 from sim.store import spread
@@ -30,7 +30,9 @@ class Result:
     def __init__(self, name: str, out: Path):
         self.sc = load_scenario(name)
         self.store = simulate(self.sc, out)
-        run(out / "bay_readings.jsonl", out, load_brain_config(), SKUS)
+        summary = run(out / "bay_readings.jsonl", out, load_brain_config(), SKUS)
+        self.recheck = summary.recheck_bays
+        self.observations = bus.read_jsonl(out / "observations.jsonl", SlotObservation)
         self.readings = bus.read_jsonl(out / "bay_readings.jsonl", BayReading)
         self.events = bus.read_jsonl(out / "events.jsonl", Event)
         self.strays = bus.read_jsonl(out / "strays.jsonl", StrayItem)
@@ -167,21 +169,28 @@ def test_ambiguous_never_misplaced(sim):
     assert {s.kind for s in r.strays} == {"AMBIGUOUS"}
 
 
-def test_facing_up_front_looks_full(sim):
+def test_facing_up_low_from_the_estimate(sim):
     r = sim("facing_up")
-    last = r.readings[-1].rows[2]
-    assert len(last.packs) == 12 and all(p.depth_left is None for p in last.packs)
-    assert sum(int(p["qty"]) for p in r.pos) == 28
-    assert r.store.slots[("G1-L-04", 2, 0)].units == 12
+    last = r.readings[-1].rows[0]
+    assert len(last.packs) == 3 and all(p.depth_left is None for p in last.packs)  # looks full
+    assert sum(int(p["qty"]) for p in r.pos) == 18
+    assert r.kinds() == ["LOW_ESTIMATED", "LOW_ESTIMATED"]
+    assert {e.source for e in r.events} == {"estimate"}
+    assert r.tasks == []  # an estimate alone never makes a staff task
+    assert r.recheck == {"G1-L-05": "verify"}
 
 
-def test_conflict_robot_sees_empty(sim):
+def test_conflict_marks_slot_unsure(sim):
     r = sim("conflict")
     robot = [x for x in r.readings if x.source == "robot"]
     assert len(robot) == 1 and robot[0].t == r.minute("15:00")
     assert robot[0].rows[2].packs == [] and robot[0].rows[2].labels
     cam = [x for x in r.readings if x.source == "camera" and x.t == r.minute("15:00")]
     assert len(cam[0].rows[2].packs) == 12
+    assert r.events == [] and r.tasks == []  # no alert either way
+    assert r.recheck == {"G1-L-04": "conflict"}
+    unsure = [o for o in r.observations if o.status == "UNSURE"]
+    assert unsure and all(o.row == 2 for o in unsure)
 
 
 @pytest.mark.parametrize(

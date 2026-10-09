@@ -11,7 +11,8 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from shelfpulse.contracts import BayId, SkuId, SkuRef
 
-SlotStatus = Literal["OK", "LOW", "OUT", "UNKNOWN"]  # UNKNOWN = slot not (fully) seen
+# UNKNOWN = slot not (fully) seen or packs not named; UNSURE = camera and robot disagree
+SlotStatus = Literal["OK", "LOW", "OUT", "UNKNOWN", "UNSURE"]
 StrayKind = Literal["MISPLACED", "UNKNOWN_ITEM", "AMBIGUOUS"]
 EventKind = Literal["OUT", "LOW", "LOW_ESTIMATED", "MISPLACED", "UNKNOWN_ITEM", "RESOLVED"]
 TaskAction = Literal["RESTOCK", "REORDER", "CYCLE_COUNT", "RETURN", "ENROL", "LOSS_PREVENTION"]

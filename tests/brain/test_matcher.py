@@ -89,6 +89,19 @@ def test_unknown_pack_is_unknown_item():
     assert st.kind == "UNKNOWN_ITEM"
 
 
+def test_unnamed_packs_make_a_slot_unknown_not_out():
+    # Vision found packs but named none of them (e.g. no gallery index): can't tell, not OUT.
+    packs = [pack("UNKNOWN", 10.0 * i) for i in range(6)] + full_row()[6:]
+    s = row3(match(PLAN, reading(packs)))["RICE_1KG"]
+    assert (s.status, s.facings, s.units) == ("UNKNOWN", 0, None)
+
+
+def test_named_facings_still_ok_beside_an_unknown_pack():
+    packs = full_row()
+    packs[5] = pack("UNKNOWN", 50.0)
+    assert row3(match(PLAN, reading(packs)))["RICE_1KG"].status == "OK"
+
+
 def test_ambiguous_with_planned_candidate_counts_as_facing():
     packs = full_row()
     packs[6] = pack("AMBIGUOUS:DAL_1KG|DAL_500G", 60.0, depth=None)

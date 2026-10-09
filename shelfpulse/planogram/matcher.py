@@ -6,8 +6,9 @@ the slot that contains its centre. Per slot:
 - facings = packs of the planned SKU, counting an `AMBIGUOUS:` pack if the planned SKU is one
   of its candidates (so ambiguity never causes a false OUT);
 - OUT if none, LOW if fewer than min_facings, else OK;
-- an OUT/LOW slot that overlaps an occluded range becomes UNKNOWN (never alert on what is
-  hidden), and so does every slot of a row the reading does not list.
+- an OUT/LOW slot becomes UNKNOWN ("can't tell") when it overlaps an occluded range (never
+  alert on what is hidden) or holds UNKNOWN packs (packs are there but Vision couldn't name
+  them, e.g. without its gallery index), and so does every slot of a row the reading omits.
 
 Any other pack is a stray: MISPLACED (a real, different SKU), UNKNOWN_ITEM (not in the gallery)
 or AMBIGUOUS (candidates don't include the planned SKU; never reported as MISPLACED).
@@ -70,7 +71,8 @@ def _match_row(
             else:
                 out.strays.append(_stray(row_no, s.position, s.sku_id, p, reading))
         status = _status(len(counted), s)
-        if status != "OK" and _overlaps(s, row.occluded):
+        unnamed = any(p.sku == UNKNOWN_SKU for p in by_slot[i])
+        if status != "OK" and (unnamed or _overlaps(s, row.occluded)):
             status = "UNKNOWN"
         out.slots.append(_obs(row_no, s, counted, status, reading))
 
