@@ -4,6 +4,7 @@ CLAUDE.local.md
 # Outputs, raw data, environments
 runs/
 data/raw/
+datasets/
 data/samples/
 .venv/
 

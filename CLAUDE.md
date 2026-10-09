@@ -35,5 +35,6 @@ The two tracks meet only through the contract below. Never import the other trac
 - Code must run on a laptop CPU; GPU optional.
 - Privacy: no face recognition, no identity tracking; blur people before saving any frame.
 - Never commit datasets, model weights, videos or `runs/` output (all git-ignored). Fixtures under `contracts/fixtures/` stay small (< 1 MB each).
+- Exception: `data/gallery/` (pack-shot photos for product identification and the demo) is committed: each photo < 200 KB, all credited in `data/gallery/SOURCES.csv` (CC BY-SA, Open Food Facts and sister sites). Rebuild it with `python -m tools.fetch_gallery`.
 - Do not invent accuracy numbers in docs; report only what the evaluation scripts measure.
 - Ask before adding a heavy dependency.
