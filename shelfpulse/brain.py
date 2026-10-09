@@ -19,6 +19,9 @@ Shelf labels on robot readings rebuild each bay's label map, written to --label-
 <out>/label_maps/; the store's shared folder is data/label_maps/). A bay with no digital
 planogram is matched against its label map; where both exist, persistent differences go to
 label_drift.jsonl.
+
+Everything is also written to <out>/shelfpulse.db (SQLite), which the API serves:
+python -m shelfpulse.api.server --db <out>/shelfpulse.db
 """
 
 from __future__ import annotations
@@ -62,6 +65,7 @@ from shelfpulse.robot_planner.scheduler import Scheduler
 from shelfpulse.state.quantity import QuantityCfg, low_estimated, shelf_estimate
 from shelfpulse.state.shelf_state import ShelfState
 from shelfpulse.state.slot_tracker import SlotTracker
+from shelfpulse.storage.db import Store
 
 OUTPUT_FILES = (
     "observations.jsonl",
@@ -483,13 +487,14 @@ def load_store_data(folder: Path | None) -> StoreData | None:
 
 
 class Writer:
-    """Writes a brain's outputs into a run folder (each file starts empty)."""
+    """Writes a brain's outputs into a run folder (each file starts empty) and its SQLite store."""
 
     def __init__(self, out_dir: Path):
         out_dir.mkdir(parents=True, exist_ok=True)
         self.paths = {name: out_dir / name for name in OUTPUT_FILES}
         for p in self.paths.values():
             p.write_text("", encoding="utf-8")
+        self.store = Store.fresh(out_dir / "shelfpulse.db")
 
     def write(self, out: Output) -> None:
         bus.append_jsonl(self.paths["observations.jsonl"], out.observations)
@@ -498,6 +503,7 @@ class Writer:
         bus.append_jsonl(self.paths["tasks.jsonl"], out.tasks)
         bus.append_jsonl(self.paths["missions.jsonl"], out.missions)
         bus.append_jsonl(self.paths["label_drift.jsonl"], out.drift)
+        self.store.save(out.observations, out.events, out.tasks, out.missions)
 
 
 def make_brain(

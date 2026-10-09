@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShelfPulse tasks</title>
+<style>
+  :root { --bg: #f6f7f9; --card: #fff; --ink: #1c2330; --muted: #5d6675; --line: #dfe3ea;
+          --p1: #d64545; --p2: #e0a100; --p3: #9aa3b2; --go: #2f9e6b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #12161d; --card: #1b212b; --ink: #e8ecf2; --muted: #9aa4b4; --line: #2c3442; --p3: #5f6878; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { position: sticky; top: 0; background: var(--bg); padding: 14px 16px 8px; border-bottom: 1px solid var(--line); }
+  h1 { font-size: 19px; margin: 0; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .filters { display: flex; gap: 8px; margin-top: 8px; }
+  .filters button { flex: 1; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); font: inherit; font-size: 14px; }
+  .filters button[aria-pressed="true"] { border-color: var(--ink); font-weight: 600; }
+  main { padding: 12px 16px 32px; display: grid; gap: 12px; max-width: 640px; margin: 0 auto; }
+  .card { background: var(--card); border: 1px solid var(--line); border-left: 6px solid var(--p3); border-radius: 10px; padding: 14px; }
+  .card.P1 { border-left-color: var(--p1); } .card.P2 { border-left-color: var(--p2); }
+  .top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .what { font-size: 18px; font-weight: 650; }
+  .where { font-size: 15px; margin: 4px 0 2px; }
+  .row { display: flex; gap: 10px; margin-top: 12px; }
+  .row button { flex: 1; padding: 12px; font: inherit; font-weight: 600; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+  .row button.done { background: var(--go); border-color: var(--go); color: #fff; }
+  .note { margin-top: 10px; font-size: 14px; color: var(--muted); }
+  .empty { text-align: center; color: var(--muted); padding: 40px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Shelf tasks</h1>
+  <div class="muted" id="updated">loading...</div>
+  <div class="filters">
+    <button data-who="staff" aria-pressed="true">Staff</button>
+    <button data-who="manager" aria-pressed="false">Manager</button>
+  </div>
+</header>
+<main id="list"></main>
+<script>
+const ACTIONS = {
+  RESTOCK: "Restock", REORDER: "Re-order", CYCLE_COUNT: "Count stock", RETURN: "Return to home bay",
+  ENROL: "Photograph new product",
+};
+const CAUSES = {
+  REPLENISHMENT_GAP: "Shelf empty, backroom has stock", TRUE_STOCKOUT: "None left in the store",
+  PHANTOM_STOCK: "System count looks wrong", THEFT: "Shelf emptied suddenly",
+  NO_STORE_DATA: "Shelf empty (no stock data)", MISPLACED: "Found in the wrong place",
+  UNKNOWN_ITEM: "Product not recognised",
+};
+let who = "staff";
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function send(id, verdict) {
+  const r = await fetch(`/tasks/${encodeURIComponent(id)}/feedback`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ verdict }),
+  });
+  if (!r.ok) alert("Couldn't save: " + r.status);
+  refresh();
+}
+
+function card(t) {
+  const where = t.action === "RETURN" ? `Take it to <b>${esc(t.bay)}</b> <span class="muted">(found at ${esc(t.seen_bay)})</span>`
+                                      : `Bay <b>${esc(t.bay)}</b>, shelf ${t.row + 1} from the bottom`;
+  const fb = t.feedback === "DONE" ? `<div class="note">Marked done. The camera or robot will confirm it.</div>`
+           : t.feedback === "NOT_REAL" ? `<div class="note">Marked not real. Thanks, this helps the system learn.</div>`
+           : `<div class="row"><button class="done" onclick="send('${esc(t.id)}','DONE')">Done</button>
+                <button onclick="send('${esc(t.id)}','NOT_REAL')">Not real</button></div>`;
+  return `<article class="card ${t.priority}">
+    <div class="top"><span class="what">${ACTIONS[t.action] || esc(t.action)}: ${esc(t.sku_id)}</span><span class="muted">${t.priority}</span></div>
+    <div class="where">${where}</div>
+    <div class="muted">${t.qty ? `Qty ${t.qty} · ` : ""}${CAUSES[t.cause] || esc(t.cause)}${t.rupees_per_h ? ` · ₹${Math.round(t.rupees_per_h)}/h at risk` : ""}</div>
+    ${fb}</article>`;
+}
+
+async function refresh() {
+  try {
+    const ts = await fetch(`/tasks?status=OPEN&assignee=${who}`).then((r) => r.json());
+    document.getElementById("list").innerHTML = ts.length ? ts.map(card).join("") : `<div class="empty">Nothing to do right now.</div>`;
+    document.getElementById("updated").textContent = `${ts.length} open · updated ${new Date().toLocaleTimeString()}`;
+  } catch (e) {
+    document.getElementById("updated").textContent = "Can't reach the server.";
+  }
+}
+document.querySelectorAll(".filters button").forEach((b) => b.onclick = () => {
+  who = b.dataset.who;
+  document.querySelectorAll(".filters button").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  refresh();
+});
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

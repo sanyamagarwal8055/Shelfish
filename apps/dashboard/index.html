@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShelfPulse dashboard</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1c2330; --muted: #5d6675; --line: #dfe3ea;
+    --ok: #2f9e6b; --low: #e0a100; --out: #d64545; --unsure: #7a5cd6; --unknown: #9aa3b2;
+    --unseen: #e9ecf1; --accent: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12161d; --panel: #1b212b; --ink: #e8ecf2; --muted: #9aa4b4; --line: #2c3442;
+      --unseen: #262e3a; --unknown: #5f6878; --accent: #6ea0ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; justify-content: space-between; align-items: baseline;
+           padding: 16px 20px 8px; flex-wrap: wrap; gap: 8px; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  .muted { color: var(--muted); }
+  main { padding: 8px 20px 24px; display: grid; gap: 16px;
+         grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); padding: 8px 16px 24px; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .tiles { grid-column: 1 / -1; display: grid; gap: 12px;
+           grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .tile .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .tile .k { color: var(--muted); font-size: 12px; }
+  svg { width: 100%; height: auto; display: block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .tablewrap { overflow-x: auto; }
+  .p { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #fff; }
+  .P1 { background: var(--out); } .P2 { background: var(--low); } .P3 { background: var(--unknown); }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .wide { grid-column: 1 / -1; }
+  .empty { color: var(--muted); padding: 8px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ShelfPulse <span class="muted" style="font-weight:400">store dashboard</span></h1>
+  <span class="muted" id="updated">loading...</span>
+</header>
+<main>
+  <section class="tiles" id="tiles"></section>
+
+  <section class="panel">
+    <h2>Store map <span class="muted" style="font-weight:400">· worst slot per bay</span></h2>
+    <svg id="map" viewBox="0 0 48 30" role="img" aria-label="Store map coloured by shelf status"></svg>
+    <div class="legend" id="legend"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Robot missions</h2>
+    <ul id="missions"></ul>
+    <h2 style="margin-top:16px">Recent alerts</h2>
+    <ul id="events"></ul>
+  </section>
+
+  <section class="panel wide">
+    <h2>Tasks</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Pri</th><th>Task</th><th>Action</th><th>Product</th><th>Bay</th>
+        <th class="num">Qty</th><th>Cause</th><th class="num">₹/h</th><th>Status</th><th>Staff</th></tr></thead>
+      <tbody id="tasks"></tbody>
+    </table></div>
+  </section>
+</main>
+<script>
+const COLORS = { OUT: "--out", LOW: "--low", UNSURE: "--unsure", UNKNOWN: "--unknown", OK: "--ok", UNSEEN: "--unseen" };
+const LABELS = { OUT: "Out", LOW: "Low", UNSURE: "Camera/robot disagree", UNKNOWN: "Can't tell", OK: "OK", UNSEEN: "Not seen yet" };
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const hhmm = (iso) => iso ? iso.slice(11, 16) : "";
+const get = (u) => fetch(u).then((r) => r.json());
+
+function tiles(m) {
+  const t = [
+    ["Shelf availability", m.availability_pct == null ? "–" : m.availability_pct + "%", m.slots_seen + " slots seen"],
+    ["Open tasks", m.open_tasks, `P1 ${m.open_by_priority.P1} · P2 ${m.open_by_priority.P2} · P3 ${m.open_by_priority.P3}`],
+    ["At risk", "₹" + Math.round(m.rupees_per_h_at_risk).toLocaleString("en-IN") + "/h", "lost sales on open tasks"],
+    ["Median time to restore", m.median_time_to_restore_min == null ? "–" : m.median_time_to_restore_min + " min", m.verified_tasks + " fixes verified"],
+    ["Marked not real", m.marked_not_real, "staff feedback"],
+  ];
+  document.getElementById("tiles").innerHTML = t.map(([k, v, s]) =>
+    `<div class="panel tile"><div class="k">${k}</div><div class="v">${esc(v)}</div><div class="k">${esc(s)}</div></div>`).join("");
+}
+
+function map(m) {
+  const H = m.depth_m;  // flip y: the store front (checkout) at the bottom, as in the blueprint
+  const rects = m.bays.map((b) =>
+    `<rect x="${b.x0}" y="${H - b.y1}" width="${b.x1 - b.x0}" height="${b.y1 - b.y0}"
+      fill="${css(COLORS[b.status])}" stroke="${css("--panel")}" stroke-width="0.06">
+      <title>${b.bay_id} · ${LABELS[b.status]}${b.tier === "camera" && b.kind === "bay" ? " · camera" : " · robot only"}</title></rect>`).join("");
+  const runs = [...new Set(m.bays.map((b) => b.run))].map((r) => {
+    const bs = m.bays.filter((b) => b.run === r && b.kind === "bay");
+    const x = (Math.min(...bs.map((b) => b.x0)) + Math.max(...bs.map((b) => b.x1))) / 2;
+    return `<text x="${x}" y="${H - 23.1}" font-size="0.8" text-anchor="middle" fill="${css("--muted")}">${r}</text>`;
+  }).join("");
+  const dock = `<rect x="${m.dock[0] - 0.6}" y="${H - m.dock[1] - 0.6}" width="1.2" height="1.2" fill="${css("--accent")}"><title>Robot dock</title></rect>
+    <text x="${m.dock[0]}" y="${H - m.dock[1] + 1.6}" font-size="0.7" text-anchor="middle" fill="${css("--muted")}">dock</text>`;
+  document.getElementById("map").innerHTML =
+    `<rect x="0" y="0" width="${m.width_m}" height="${H}" fill="none" stroke="${css("--line")}" stroke-width="0.1"/>` + rects + runs + dock +
+    `<text x="24" y="${H - 0.6}" font-size="0.8" text-anchor="middle" fill="${css("--muted")}">checkout / front</text>`;
+  document.getElementById("legend").innerHTML = Object.keys(COLORS).map((k) =>
+    `<span><span class="sw" style="background:${css(COLORS[k])}"></span>${LABELS[k]}</span>`).join("");
+}
+
+function tasks(ts) {
+  const el = document.getElementById("tasks");
+  if (!ts.length) { el.innerHTML = `<tr><td colspan="10" class="empty">No tasks yet.</td></tr>`; return; }
+  el.innerHTML = ts.map((t) => `<tr>
+    <td><span class="p ${t.priority}">${t.priority}</span></td><td>${esc(t.id)}</td><td>${esc(t.action)}</td>
+    <td>${esc(t.sku_id)}</td><td>${esc(t.bay)}${t.bay !== t.seen_bay ? ` <span class="muted">(seen ${esc(t.seen_bay)})</span>` : ""}</td>
+    <td class="num">${t.qty}</td><td>${esc(t.cause)}</td><td class="num">${Math.round(t.rupees_per_h)}</td>
+    <td>${esc(t.status)}${t.time_to_restore_min != null ? ` <span class="muted">${t.time_to_restore_min} min</span>` : ""}</td>
+    <td>${t.feedback ? esc(t.feedback === "DONE" ? "Done" : "Not real") : '<span class="muted">–</span>'}</td></tr>`).join("");
+}
+
+function list(id, items, fmt, none) {
+  document.getElementById(id).innerHTML = items.length ? items.map((x) => `<li>${fmt(x)}</li>`).join("") : `<li class="empty">${none}</li>`;
+}
+
+async function refresh() {
+  try {
+    const [m, mp, ts, ev, ms] = await Promise.all([get("/metrics"), get("/store/map"), get("/tasks"), get("/events?limit=12"), get("/missions?limit=8")]);
+    tiles(m); map(mp); tasks(ts);
+    list("events", ev, (e) => `<b>${esc(e.kind)}</b> ${esc(e.sku)} · ${esc(e.bay_id)} row ${e.row} <span class="muted">${hhmm(e.t)} · ${esc(e.source)}</span>`, "No alerts yet.");
+    list("missions", ms, (x) => `<b>${esc(x.mission_id)}</b> ${x.kind === "sweep" ? "full sweep" : esc(x.bays.map((b) => `${b} (${x.reasons[b]})`).join(", "))} <span class="muted">${hhmm(x.created_at)}</span>`, "No missions yet.");
+    document.getElementById("updated").textContent = "updated " + new Date().toLocaleTimeString();
+  } catch (e) {
+    document.getElementById("updated").textContent = "can't reach the API: " + e;
+  }
+}
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
