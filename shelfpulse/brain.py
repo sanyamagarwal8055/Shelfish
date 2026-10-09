@@ -41,6 +41,8 @@ from shelfpulse.decision.tasks import SLOT_KINDS, Plan, TaskBook, plans_for_slot
 from shelfpulse.decision.types import Event, SlotObservation, StrayItem, Task
 from shelfpulse.planogram.loader import PlanogramStore
 from shelfpulse.planogram.matcher import MatchResult, match
+from shelfpulse.state.quantity import QuantityCfg, low_estimated, shelf_estimate
+from shelfpulse.state.shelf_state import ShelfState
 from shelfpulse.state.slot_tracker import SlotTracker
 
 OUTPUT_FILES = (
@@ -100,6 +102,7 @@ class BrainConfig(_Cfg):
     missions: MissionsCfg
     diagnosis: DiagnosisCfg
     priority: PriorityCfg
+    quantity: QuantityCfg
     sim: SimCfg
 
 
@@ -126,6 +129,8 @@ class Summary:
     strays: Counter[str] = field(default_factory=Counter)
     events: Counter[str] = field(default_factory=Counter)
     tasks: Counter[str] = field(default_factory=Counter)  # new tasks by action
+    recheck: Counter[str] = field(default_factory=Counter)  # robot re-check requests by reason
+    recheck_bays: dict[str, str] = field(default_factory=dict)  # at the end: bay -> last reason
     store_data: bool = False
 
 
@@ -158,6 +163,9 @@ class Brain:
         self._seen_tasks: set[str] = set()
         self._last_obs: dict[Hashable, SlotObservation] = {}
         self._history: dict[Hashable, deque[tuple[datetime, int]]] = defaultdict(deque)
+        self.shelf = ShelfState(cfg.fusion.conflict_window_s)
+        # bay -> (reason, when): bays the robot planner should look at again
+        self.recheck: dict[str, tuple[str, datetime]] = {}
         t = cfg.tracker
         self.tracker = SlotTracker(t.k, t.n, t.clear_after, t.robot_overrides)
         self._meta: dict[Hashable, tuple[int, int | None, str]] = {}  # key -> row, position, sku
@@ -175,18 +183,54 @@ class Brain:
             self.summary.no_planogram.add(reading.bay_id)
             return Output()
         m = match(plan, reading)
-        self.summary.slot_status.update(o.status for o in m.slots)
+        slots, votes = self._fuse(reading, m.slots)
+        self.summary.slot_status.update(o.status for o in slots)
         self.summary.strays.update(s.kind for s in m.strays)
-        self._remember(m.slots)
-        events = self._track(reading, m)
+        self._remember(slots)
+        events = self._track(reading, m, votes)
         self.summary.events.update(e.kind for e in events)
         tasks = [t for e in events for t in self._decide(e)]
         for t in tasks:
             if t.id not in self._seen_tasks:
                 self._seen_tasks.add(t.id)
                 self.summary.tasks[t.action] += 1
-        # shelf state (camera/robot fusion, sales-based quantity) arrives in a later step
-        return Output(observations=m.slots, strays=m.strays, events=events, tasks=tasks)
+        return Output(observations=slots, strays=m.strays, events=events, tasks=tasks)
+
+    # --- shelf state: camera/robot fusion and the sales-based estimate ----------------------------
+
+    def _fuse(
+        self, reading: BayReading, slots: list[SlotObservation]
+    ) -> tuple[list[SlotObservation], dict[Hashable, str | None]]:
+        """Per slot: UNSURE if camera and robot disagree (no vote, re-check); LOW_ESTIMATED vote
+        if it looks fine, depth is unknown and sales say little is left; else its own status."""
+        out, votes = [], {}
+        for o in slots:
+            key = ("slot", o.bay_id, o.row, o.position)
+            if o.status == "UNKNOWN":  # unseen: no vote either way
+                out.append(o)
+                continue
+            if self.shelf.conflict(key, reading.source, o.status, reading.t):
+                out.append(o.model_copy(update={"status": "UNSURE"}))
+                self._queue(o.bay_id, "conflict", reading.t)
+                continue
+            vote = None if o.status == "OK" else o.status
+            if vote is None and o.units is None and self._estimated_low(o.sku, reading.t):
+                vote = "LOW_ESTIMATED"
+            votes[key] = vote
+            out.append(o)
+        return out, votes
+
+    def _estimated_low(self, sku: str, t: datetime) -> bool:
+        if self.store_data is None:
+            return False
+        p = self.cfg.priority
+        velocity = self.store_data.velocity(sku, t, p.velocity_window_h, p.min_velocity_span_h)
+        return low_estimated(shelf_estimate(sku, t, self.store_data), velocity, self.cfg.quantity)
+
+    def _queue(self, bay_id: str, reason: str, t: datetime) -> None:
+        if bay_id not in self.recheck:
+            self.summary.recheck[reason] += 1
+        self.recheck[bay_id] = (reason, t)
 
     # --- shelf memory for diagnosis --------------------------------------------------------------
 
@@ -194,7 +238,7 @@ class Brain:
         """Keep each seen slot's latest observation and its recent pack counts."""
         keep = timedelta(minutes=self.cfg.diagnosis.theft_window_min * 2)
         for o in slots:
-            if o.status == "UNKNOWN":
+            if o.status in ("UNKNOWN", "UNSURE"):
                 continue
             key = ("slot", o.bay_id, o.row, o.position)
             self._last_obs[key] = o
@@ -215,6 +259,9 @@ class Brain:
     def _decide(self, e: Event) -> list[Task]:
         if e.kind == "RESOLVED":
             return self.tasks.verify(e)
+        if e.kind == "LOW_ESTIMATED":  # an estimate never makes a staff task: send the robot
+            self._queue(e.bay_id, "verify", e.t)
+            return []
         sku = self.skus.get(e.sku)
         margin = sku.margin_inr if sku else 0.0
         velocity = 0.0
@@ -243,14 +290,16 @@ class Brain:
             plans = [Plan("ENROL", e.bay_id, 1, "UNKNOWN_ITEM", 0.0, prio("ENROL", 0.0), "staff")]
         return self.tasks.upsert(e, plans)
 
-    def _track(self, reading: BayReading, m: MatchResult) -> list[Event]:
-        """Feed slot statuses and strays to the k-of-n tracker; return the confirmed changes."""
+    def _track(
+        self, reading: BayReading, m: MatchResult, votes: dict[Hashable, str | None]
+    ) -> list[Event]:
+        """Feed slot votes and strays to the k-of-n tracker; return the confirmed changes."""
         reports: list[tuple[Hashable, str | None]] = []
         for o in m.slots:
-            if o.status != "UNKNOWN":  # unseen: no vote either way
-                key = ("slot", o.bay_id, o.row, o.position)
+            key = ("slot", o.bay_id, o.row, o.position)
+            if key in votes:
                 self._meta[key] = (o.row, o.position, o.sku)
-                reports.append((key, None if o.status == "OK" else o.status))
+                reports.append((key, votes[key]))
 
         present: set[Hashable] = set()
         for s in m.strays:
@@ -285,7 +334,7 @@ class Brain:
                     t=tr.t,
                     since=tr.since,
                     previous=tr.previous,
-                    source=reading.source,
+                    source="estimate" if tr.kind == "LOW_ESTIMATED" else reading.source,
                 )
             )
         return events
@@ -326,6 +375,7 @@ def run(
         bus.append_jsonl(paths["events.jsonl"], out.events)
         bus.append_jsonl(paths["tasks.jsonl"], out.tasks)
         bus.append_jsonl(paths["missions.jsonl"], out.missions)
+    brain.summary.recheck_bays = {bay: reason for bay, (reason, _) in brain.recheck.items()}
     return brain.summary
 
 
@@ -345,6 +395,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{s.readings} readings: {s.trusted} trusted, {s.untrusted} below quality threshold")
     print(f"slots: {dict(sorted(s.slot_status.items()))}  strays: {dict(sorted(s.strays.items()))}")
     print(f"events: {dict(sorted(s.events.items()))}")
+    if s.recheck:
+        print(f"robot re-checks queued: {dict(sorted(s.recheck.items()))}")
     print(f"new tasks: {dict(sorted(s.tasks.items()))}"
           + ("" if s.store_data else "  (no POS/stock data: causes unknown)"))  # fmt: skip
     if s.no_planogram:

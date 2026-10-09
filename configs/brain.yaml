@@ -28,6 +28,10 @@ diagnosis: # why a slot is empty, checked in this order: theft, restock, phantom
   theft_max_sales_frac: 0.2 # ... with at most this share of it sold at the till = theft
   phantom_min_units: 5 # system on-hand minus shelves minus backroom >= this = wrong count
 
+quantity: # sales-based estimate, used only where the cameras can't see depth
+  restock_lead_h: 0.5 # staff need this long to refill once told
+  safety_units: 2 # LOW_ESTIMATED when the estimate < velocity x lead time + this
+
 priority: # rupees lost per hour = velocity (packs/h) x margin (Rs/pack)
   velocity_window_h: 168 # trailing sales window (7 days)
   min_velocity_span_h: 1.0 # never divide by less than this, so a short history isn't inflated

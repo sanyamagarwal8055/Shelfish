@@ -19,7 +19,7 @@ from collections.abc import Hashable
 from dataclasses import dataclass, field
 from datetime import datetime
 
-SEVERITY = ("OUT", "LOW", "MISPLACED", "UNKNOWN_ITEM")  # most severe first
+SEVERITY = ("OUT", "LOW", "LOW_ESTIMATED", "MISPLACED", "UNKNOWN_ITEM")  # most severe first
 RESOLVED = "RESOLVED"
 
 
