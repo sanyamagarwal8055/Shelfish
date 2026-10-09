@@ -51,12 +51,16 @@ def bay_size_px(px_per_cm: float = PX_PER_CM) -> tuple[int, int]:
 
 
 def warp_to_bay(
-    img: np.ndarray, corners: np.ndarray | list, px_per_cm: float = PX_PER_CM
+    img: np.ndarray,
+    corners: np.ndarray | list,
+    px_per_cm: float = PX_PER_CM,
+    nearest: bool = False,
 ) -> np.ndarray:
     """Warp the bay seen at `corners` (top-left, top-right, bottom-right, bottom-left, in px)
-    to a front-on image: 1200 x 2100 px at 10 px/cm."""
+    to a front-on image: 1200 x 2100 px at 10 px/cm. `nearest` for depth maps (no blending)."""
     w, h = bay_size_px(px_per_cm)
     src = np.asarray(corners, dtype=np.float32).reshape(4, 2)
     dst = np.float32([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]])
     H = cv2.getPerspectiveTransform(src, dst)
-    return cv2.warpPerspective(img, H, (w, h), flags=cv2.INTER_LINEAR)
+    interp = cv2.INTER_NEAREST if nearest else cv2.INTER_LINEAR
+    return cv2.warpPerspective(img, H, (w, h), flags=interp)
